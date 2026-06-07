@@ -1,0 +1,44 @@
+# guardrails — curated gate set, run by `prek` (pre-commit compatible). Tools come from the
+# guardrails devShell (lib.mkDevShell), so `entry` commands are on PATH. Copy this into a consuming
+# repo (or scaffold via `nix flake init -t github:gerchowl/guardrails`).
+repos:
+  - repo: local
+    hooks:
+      - id: no-fake-impl
+        name: no fake/placeholder implementations
+        entry: guardrails-no-fake-impl
+        language: system
+        pass_filenames: true
+      - id: no-debug-leftovers
+        name: no debug-print leftovers (use the tracing facade)
+        entry: guardrails-no-debug-leftovers
+        language: system
+        pass_filenames: true
+      - id: no-commented-code
+        name: no commented-out code
+        entry: guardrails-no-commented-code
+        language: system
+        pass_filenames: true
+      - id: gitleaks
+        name: secrets scan
+        entry: gitleaks protect --staged --redact -v
+        language: system
+        pass_filenames: false
+      - id: rustfmt
+        name: rustfmt
+        entry: cargo fmt --all -- --check
+        language: system
+        files: \.rs$
+        pass_filenames: false
+      - id: clippy
+        name: clippy (-D warnings)
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        files: \.rs$
+        pass_filenames: false
+      - id: cargo-deny
+        name: cargo-deny (licenses + advisories)
+        entry: cargo deny check
+        language: system
+        files: Cargo\.(toml|lock)$
+        pass_filenames: false
