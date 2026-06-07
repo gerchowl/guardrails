@@ -39,10 +39,10 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
 
 ## The list — what's next (roadmap, ranked)
 
-1. ~~Tunables registry~~ ✅ **shipped** (`crates/tunables/`). Next: a no-hardcoded-values gate that
-   checks every numeric literal is either primitive-allow or inside a `const_tunable!`/`config!`,
-   and a `tunables` CLI/build-step that regenerates `TUNABLES.md` in CI.
-2. **`tracing` starter layer** — a small crate/snippet: `EnvFilter` subscriber + structured local
+1. ~~Tunables registry~~ ✅ **shipped** (`crates/tunables/`) + ~~no-hardcoded gate & CI regen~~ ✅
+   (`gates/no-hardcoded.sh`, tracked `TUNABLES.md`, `.github/workflows/ci.yml`).
+2. ~~**`tracing` starter layer**~~ ✅ **shipped** (`crates/trace/`): `init()` / `init_jsonl()` —
+   `EnvFilter` + structured local
    JSONL layer + the level contract, with `release_max_level_*` + `profiling`/`dhat` features
    pre-wired (Tier-1/2/3 from CONVENTIONS). One drop-in for the whole observability spine.
 3. **Perf harness wiring** — criterion + CodSpeed CI action + a `perf-budgets` file + gate, with the
