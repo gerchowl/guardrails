@@ -52,12 +52,14 @@
         packages.gates = gates;
         packages.default = gates;
 
-        devShells.default = pkgs.mkShell { packages = toolbelt; };
+        # rustc+cargo so guardrails' own crate (tunables) builds/tests here; consumers bring their own.
+        devShells.default = pkgs.mkShell { packages = toolbelt ++ [ pkgs.rustc pkgs.cargo ]; };
 
         # `nix flake check` runs the gates over this repo as a smoke test.
         checks.gates = pkgs.runCommand "guardrails-selfcheck" { buildInputs = [ gates ]; } ''
           cd ${./.}
-          guardrails-no-fake-impl . && guardrails-no-debug-leftovers . && guardrails-no-commented-code . \
+          guardrails-no-fake-impl . && guardrails-no-debug-leftovers . \
+            && guardrails-no-commented-code . && guardrails-no-hardcoded . \
             && touch $out
         '';
       })

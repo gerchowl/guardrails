@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      # Gates over this repo (no-fake-impl / no-debug-leftovers / no-commented-code / no-hardcoded).
+      - name: gates
+        run: nix flake check -L
+
+      # Tunables crate: tests + the registry must be regenerated and committed (can't drift).
+      - name: tunables tests
+        run: nix develop -c bash -c 'cd crates/tunables && cargo test'
+      - name: TUNABLES.md is current
+        run: |
+          nix develop -c bash -c 'cd crates/tunables && cargo run --quiet --example gpu_bench'
+          git diff --exit-code crates/tunables/TUNABLES.md \
+            || { echo "::error:: TUNABLES.md is stale — run: (cd crates/tunables && cargo run --example gpu_bench) and commit"; exit 1; }
