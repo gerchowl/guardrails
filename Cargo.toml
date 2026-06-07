@@ -1,0 +1,6 @@
+# Root workspace so the crates are resolvable as a git dependency:
+#   guardrails-tunables = { git = "https://github.com/gerchowl/guardrails" }
+#   guardrails-trace    = { git = "https://github.com/gerchowl/guardrails" }
+[workspace]
+resolver = "2"
+members = ["crates/tunables", "crates/trace"]
