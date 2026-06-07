@@ -31,12 +31,17 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
 - **Conventions** (`docs/CONVENTIONS.md`): the gate/nudge/CI matrix, the tracing spine (logging
   levels + audit + perf + the agentic-pane trace), the **compile-target 3-tier split** for a lean
   end-product, and perf baselines/budgets/methodology.
+- **Tunables registry** (`crates/tunables/`): `const_tunable!` / `config!` macros that declare a
+  value at its definition site and auto-register it into one generated, scannable `TUNABLES.md`
+  (co-located + auditable + can't drift — the decorator→registry that retires hand-maintained
+  allowlists). Two tiers: `const` (behaviour-defining, not runtime-overridable) vs `config`
+  (operator/deploy-tunable). `cargo run --example gpu_bench` generates the audit file.
 
 ## The list — what's next (roadmap, ranked)
 
-1. **Tunables registry** — the `config!` / `const_tunable!` macros → generated `TUNABLES.md`
-   (the decorator→registry that replaces hand-maintained allowlists; kills magic-number drift *and*
-   allowlist rot). Highest-value next piece.
+1. ~~Tunables registry~~ ✅ **shipped** (`crates/tunables/`). Next: a no-hardcoded-values gate that
+   checks every numeric literal is either primitive-allow or inside a `const_tunable!`/`config!`,
+   and a `tunables` CLI/build-step that regenerates `TUNABLES.md` in CI.
 2. **`tracing` starter layer** — a small crate/snippet: `EnvFilter` subscriber + structured local
    JSONL layer + the level contract, with `release_max_level_*` + `profiling`/`dhat` features
    pre-wired (Tier-1/2/3 from CONVENTIONS). One drop-in for the whole observability spine.

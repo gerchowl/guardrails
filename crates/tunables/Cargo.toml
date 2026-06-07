@@ -1,0 +1,8 @@
+[package]
+name = "guardrails-tunables"
+version = "0.1.0"
+edition = "2021"
+description = "Declare tunables at the definition site; they auto-register into one scannable registry (generated TUNABLES.md). The decorator→registry that retires hand-maintained allowlists."
+
+[dependencies]
+inventory = "0.3"
