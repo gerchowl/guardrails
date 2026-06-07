@@ -1,4 +1,2 @@
 /result
 **/target/
-# Generated audit surface (regenerate via `cargo run --example gpu_bench`)
-crates/tunables/TUNABLES.md
