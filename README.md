@@ -14,7 +14,7 @@ inputs.guardrails.url = "github:gerchowl/guardrails";
 devShells.default = guardrails.lib.${system}.mkDevShell { inherit pkgs; extra = [ /* your tools */ ]; };
 ```
 …or scaffold a fresh repo: `nix flake init -t github:gerchowl/guardrails`.
-The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commit-config.yaml` is present.
+The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commit-config.yaml` is present. The installed hook **self-bootstraps the devShell** (direnv, else `nix develop`), so commits from merges, worktrees, or a plain shell still run the gates instead of erroring on a missing toolbelt.
 
 ## What's wired (this MVP)
 
