@@ -41,8 +41,26 @@
             pkgs.mkShell {
               packages = toolbelt ++ extra;
               shellHook = ''
-                # Wire the git hooks if a config is present (prek is pre-commit-config compatible).
-                if [ -f .pre-commit-config.yaml ] && [ -d .git ]; then prek install >/dev/null 2>&1 || true; fi
+                # Wire the git hooks if a config is present (prek is pre-commit-config compatible),
+                # then wrap prek's hook so it self-bootstraps THIS devShell: merges, worktrees, and
+                # plain shells commit without it active, which would otherwise error on the gate
+                # binaries (guardrails-*) not being on PATH and force a --no-verify.
+                if [ -f .pre-commit-config.yaml ] && [ -d .git ]; then
+                  hd="$(git rev-parse --git-path hooks 2>/dev/null)"
+                  f="$hd/pre-commit"
+                  # Set up ONCE. If our bootstrap is already injected, leave the hook alone:
+                  # prek's shim reads the live config at run time so it never needs reinstalling,
+                  # and re-running `prek install` over our injected hook would migrate it to
+                  # .legacy (double-run + a dangling reference). Idempotent + quiet.
+                  if [ -n "$hd" ] && ! grep -qs bootstrap-pre-commit "$f"; then
+                    prek install >/dev/null 2>&1 || true
+                    if [ -f "$f" ] && ! grep -qs bootstrap-pre-commit "$f"; then
+                      # inject the bootstrap as a sourced line right after prek's shebang
+                      { head -1 "$f"; echo ". ${./hooks/bootstrap-pre-commit.sh}"; tail -n +2 "$f"; } > "$f.tmp" \
+                        && mv "$f.tmp" "$f" && chmod +x "$f"
+                    fi
+                  fi
+                fi
                 echo "[guardrails] gates+toolbelt ready (prek/gitleaks/cargo-deny/-machete/-mutants/-bloat)"
                 ${hook}
               '';
