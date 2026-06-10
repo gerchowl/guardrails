@@ -16,8 +16,10 @@ GATES — block a commit unless escaped:
   no-commented-code   commented-out code graveyards
   no-hardcoded        magic values that should be tunables (src/ only)
   + gitleaks · rustfmt · clippy -D warnings · cargo-deny
-CI-deep (not pre-commit):
-  perf-budget         criterion regressions over a checked-in perf-budgets.toml
+CI-deep (not pre-commit) — run after `cargo criterion`:
+  perf-budget         gate criterion regressions over a checked-in perf-budgets.toml
+  perf-record         append per-bench medians to perf-history.csv — the PR diff is the report,
+                      git history is the trend (no external service)
 
 ESCAPE / BYPASS:
   one line    append  // guardrails-ok
@@ -29,6 +31,7 @@ CONFIG KNOBS (in your repo root):
                            e.g.  entry: env GUARDRAILS_OUTPUT_GLOBS=*/cli/*:scripts/* guardrails-no-debug-leftovers
   guardrails-allow.txt     no-hardcoded: blessed path prefixes to skip
   perf-budgets.toml        perf-budget: criterion median ceilings (run after `cargo criterion`)
+  perf-history.csv         perf-record: committed per-bench history; the PR diff = the perf report
   deny.toml                cargo-deny: license allow-list + advisory ignores
 
 WIRE THE HOOKS (normally automatic via direnv / nix develop):

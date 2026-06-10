@@ -105,6 +105,25 @@ perf_assert "perf-budget gates an over-budget regression" 1 "$pdir/gate.toml"
 perf_assert "perf-budget nudge mode warns, never blocks"  0 "$pdir/nudge.toml"
 perf_assert "perf-budget skips when no budgets file"      0 "$pdir/missing.toml"
 
+# --- perf-record: append CSV rows, track vs-prev across commits ----------------
+rec="$here/perf-record.sh"
+rcsv="$pdir/history.csv"
+check_csv() { # desc, grep-pattern
+  if grep -q "$2" "$rcsv"; then echo "ok    — $1"; else echo "FAIL  — $1 (no '$2' in csv)"; fails=$((fails + 1)); fi
+}
+GUARDRAILS_PERF_COMMIT=aaa1 GUARDRAILS_PERF_DATE=D1 "$rec" "$rcsv" "$pdir/under.toml" "$pdir/crit" >/dev/null 2>&1
+check_csv "perf-record writes a header" '^date,commit,bench'
+check_csv "perf-record records median + budget (under)" 'aaa1,grp/fast,900,1000,-10.0,'
+check_csv "perf-record records un-budgeted bench too"   'aaa1,grp/slow,1500,,,'
+# second commit, bump grp/fast 900 -> 1080: vs_prev = +20.0%, vs_budget(1000) = +8.0%
+printf '{"median":{"point_estimate":1080.0}}\n' > "$pdir/crit/grp/fast/new/estimates.json"
+GUARDRAILS_PERF_COMMIT=bbb2 GUARDRAILS_PERF_DATE=D2 "$rec" "$rcsv" "$pdir/under.toml" "$pdir/crit" >/dev/null 2>&1
+check_csv "perf-record tracks vs_prev across commits" 'bbb2,grp/fast,1080,1000,+8.0,+20.0'
+# re-run on same commit refreshes (not duplicates) its rows
+GUARDRAILS_PERF_COMMIT=bbb2 GUARDRAILS_PERF_DATE=D3 "$rec" "$rcsv" "$pdir/under.toml" "$pdir/crit" >/dev/null 2>&1
+if [ "$(grep -c 'bbb2,grp/fast,' "$rcsv")" = 1 ]; then echo "ok    — perf-record dedups rows per commit"
+else echo "FAIL  — perf-record duplicated rows for a commit"; fails=$((fails + 1)); fi
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2
