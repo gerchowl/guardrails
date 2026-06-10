@@ -46,10 +46,17 @@
       in
       {
         # Consumers: `guardrails.lib.${system}.mkDevShell { inherit pkgs; extra = [ ... ]; }`
+        #   extra : packages to add alongside the toolbelt (your toolchain).
+        #   hook  : shell script appended after the guardrails banner (your cheatsheet/exports).
+        #   env   : extra mkShell attrs — surfaced as environment variables in the dev shell
+        #           (e.g. { PLAYWRIGHT_BROWSERS_PATH = "..."; }). Without this a consumer
+        #           migrating an existing mkShell would have to `.overrideAttrs` them back on.
+        #   name  : the dev-shell derivation name (defaults to mkShell's "nix-shell").
         lib = {
           inherit gates toolbelt;
-          mkDevShell = { pkgs, extra ? [ ], hook ? "" }:
-            pkgs.mkShell {
+          mkDevShell = { pkgs, extra ? [ ], hook ? "", env ? { }, name ? "nix-shell" }:
+            pkgs.mkShell ({
+              inherit name;
               packages = toolbelt ++ extra;
               shellHook = ''
                 # Wire the git hooks if a config is present (prek is pre-commit-config compatible),
@@ -87,7 +94,7 @@
                 echo "[guardrails] escape a line with 'guardrails-ok' · run 'guardrails info' for gates + config."
                 ${hook}
               '';
-            };
+            } // env);
         };
 
         packages.gates = gates;

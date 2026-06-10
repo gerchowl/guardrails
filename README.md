@@ -13,7 +13,30 @@ inputs.guardrails.url = "github:gerchowl/guardrails";
 # …
 devShells.default = guardrails.lib.${system}.mkDevShell { inherit pkgs; extra = [ /* your tools */ ]; };
 ```
-…or scaffold a fresh repo: `nix flake init -t github:gerchowl/guardrails`.
+
+`mkDevShell` takes four args — `extra` and `hook` are the common ones; `env`/`name` exist so you can
+**migrate an existing `mkShell` without reaching for `.overrideAttrs`**:
+
+```nix
+devShells.default = guardrails.lib.${system}.mkDevShell {
+  inherit pkgs;
+  name  = "myproject-dev";                 # else the shell is named "nix-shell"
+  extra = with pkgs; [ rustToolchain nodejs_22 playwright-driver.browsers ];
+  env = {                                  # surfaced as environment variables in the shell
+    PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
+  };
+  hook = ''                                # appended after the guardrails banner
+    echo "myproject dev shell — rust $(rustc --version)"
+  '';
+};
+```
+
+To actually **gate commits** you also copy in `.pre-commit-config.yaml` (which gates run) and
+`deny.toml` (cargo-deny) — `nix flake init -t github:gerchowl/guardrails` drops both, or grab them
+from `templates/default/`. The input + devShell alone bring the toolbelt onto PATH; the config files
+are what the hook installs.
+
 The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commit-config.yaml` is present. The installed hook **self-bootstraps the devShell** (direnv, else `nix develop`), so commits from merges, worktrees, or a plain shell still run the gates instead of erroring on a missing toolbelt.
 
 ## What's wired (this MVP)
