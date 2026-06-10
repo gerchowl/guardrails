@@ -25,6 +25,9 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
   - `no-hardcoded` — magic values that should be tunables (`src/` only; bless prefixes in `guardrails-allow.txt`). **GATE**
   - `perf-budget` — gate criterion regressions against a checked-in `perf-budgets.toml`. **GATE/NUDGE**
     (CI-deep, not pre-commit: run after `cargo criterion`; gate big regressions, nudge the rest.)
+  - `perf-record` — append per-bench medians to a committed `perf-history.csv`. The **PR diff is the
+    perf report**; git history is the trend — no external service. Flow:
+    `cargo criterion && guardrails-perf-record && guardrails-perf-budget`, then commit the CSV.
   - + off-the-shelf in `.pre-commit-config.yaml`: gitleaks, rustfmt, clippy `-D warnings`, cargo-deny.
   - Escape hatch on any line: `guardrails-ok`. **`guardrails info`** prints the gates + every config knob.
 - **Toolbelt** (`lib.mkDevShell`): `guardrails` (info), prek, gitleaks, cargo-deny, cargo-machete,
@@ -48,11 +51,11 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
    `EnvFilter` + structured local
    JSONL layer + the level contract, with `release_max_level_*` + `profiling`/`dhat` features
    pre-wired (Tier-1/2/3 from CONVENTIONS). One drop-in for the whole observability spine.
-3. ~~**Perf harness wiring**~~ ✅ **shipped** — the `perf-budget` gate (`gates/perf-budget.sh`)
-   compares criterion medians against a checked-in `perf-budgets.toml` (template provided);
-   `cargo-criterion` in the toolbelt; gate big regressions / nudge the rest, per the
-   honest-measurement methodology in `docs/CONVENTIONS.md`. *Next:* a CodSpeed CI action for
-   noise-immune history (instruction-count sandbox) and a starter `benches/` example.
+3. ~~**Perf harness wiring**~~ ✅ **shipped** — `perf-budget` gates criterion medians against a
+   checked-in `perf-budgets.toml`; `perf-record` appends per-bench medians to a committed
+   `perf-history.csv` so the **PR diff is the perf report** and git history is the trend (no external
+   service — git is the time-series store). `cargo-criterion` in the toolbelt; gate big regressions /
+   nudge the rest, per the honest-measurement methodology in `docs/CONVENTIONS.md`.
 4. **mutation-testing CI** — `cargo-mutants` job (test-quality signal vs coverage theater).
 5. **duplication nudge** — token-based clone detector (reinvention-vs-reuse), tuned threshold.
 6. **diff blast-radius nudge** — flag PRs sprawling across unrelated areas.
