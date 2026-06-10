@@ -124,6 +124,46 @@ GUARDRAILS_PERF_COMMIT=bbb2 GUARDRAILS_PERF_DATE=D3 "$rec" "$rcsv" "$pdir/under.
 if [ "$(grep -c 'bbb2,grp/fast,' "$rcsv")" = 1 ]; then echo "ok    — perf-record dedups rows per commit"
 else echo "FAIL  — perf-record duplicated rows for a commit"; fails=$((fails + 1)); fi
 
+# --- no-hardcoded: token-level floats, underscores, paths-in-strings, env prefixes ---
+hard_gate="$here/no-hardcoded.sh"
+hard_assert() { # desc, want-exit, env(or --), file-content
+  local desc="$1" want="$2"; shift 2
+  local env=()
+  while [ "$1" != "--" ]; do env+=("$1"); shift; done
+  shift
+  printf '%s\n' "$1" > "$tmp/src/hard.rs"
+  env "${env[@]}" "$hard_gate" "$tmp/src/hard.rs" >/dev/null 2>&1
+  if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
+}
+hard_assert "bad float flagged even with allowed 0.0 on the line" 1 -- 'let a = 0.0; let b = 3.7;'
+hard_assert "allowed floats pass (0.0/0.5/1.0/2.0)"               0 -- 'let a = 0.0 + 0.5 * 1.0 - 2.0;'
+hard_assert "underscored int 100_000 is flagged"                  1 -- 'let n = 100_000;'
+hard_assert "int below 100 passes"                                0 -- 'let n = 99;'
+hard_assert "/tmp/ path INSIDE a string literal is flagged"       1 -- 'let p = "/tmp/scratch.sock";'
+hard_assert "/Users/ path inside a string literal is flagged"     1 -- 'let p = "/Users/me/x";'
+hard_assert "env-prefix literal flagged when knob set"            1 "GUARDRAILS_ENV_PREFIXES=MYAPP_:OTHER_" -- 'std::env::var("MYAPP_MODE")'
+hard_assert "env-prefix check off by default"                     0 -- 'std::env::var("MYAPP_MODE")'
+hard_assert "hardcode-ok line escape works"                       0 -- 'let b = 3.7; // hardcode-ok: feel'
+hard_assert "const_tunable! line is the sanctioned home"          0 -- 'const_tunable!(G: f32 = 9.81, "gravity");'
+hard_assert "guardrails-ok-begin/end block escape works"          0 -- '// guardrails-ok-begin: mesh
+let v = [1.5, 2.7, 300.0];
+// guardrails-ok-end'
+hard_assert "digits inside strings are not values"                0 -- 'let s = "0123456789 and 3.14159";'
+
+# --- no-conflict-markers: committed markers are flagged; setext headings are not ---
+cm_gate="$here/no-conflict-markers.sh"
+cm_assert() { # desc, want-exit, file
+  "$cm_gate" "$1" >/dev/null 2>&1
+  local got=$?
+  if [ "$got" = "$2" ]; then echo "ok    — $3"; else echo "FAIL  — $3 (want $2, got $got)"; fails=$((fails + 1)); fi
+}
+printf '%s\n' 'fn x() {}' '<<<<<<< HEAD' 'a' '=======' 'b' '>>>>>>> other' > "$tmp/conflicted.rs"
+cm_assert "$tmp/conflicted.rs" 1 "committed conflict markers are flagged"
+printf '%s\n' 'Title' '=======' '' 'prose' > "$tmp/setext.md"
+cm_assert "$tmp/setext.md" 0 "setext ======= heading alone is allowed"
+printf '%s\n' 'clean file' > "$tmp/clean.txt"
+cm_assert "$tmp/clean.txt" 0 "clean file passes"
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2
