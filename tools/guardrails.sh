@@ -15,6 +15,7 @@ GATES — block a commit unless escaped:
   no-debug-leftovers  dbg!/print!/println!/eprint!/eprintln!/console.log outside main/bin/tests
   no-commented-code   commented-out code graveyards
   no-hardcoded        magic values that should be tunables (src/ only)
+  no-conflict-markers committed <<<<<<</=======/>>>>>>> merge-marker lines (no escape — never legitimate)
   + gitleaks · rustfmt · clippy -D warnings · cargo-deny
 CI-deep (not pre-commit) — run after `cargo criterion`:
   perf-budget         gate criterion regressions over a checked-in perf-budgets.toml
@@ -30,6 +31,8 @@ CONFIG KNOBS (in your repo root):
   GUARDRAILS_OUTPUT_GLOBS  no-debug-leftovers: colon-sep path globs for legit CLI output surfaces,
                            e.g.  entry: env GUARDRAILS_OUTPUT_GLOBS=*/cli/*:scripts/* guardrails-no-debug-leftovers
   guardrails-allow.txt     no-hardcoded: blessed path prefixes to skip
+  GUARDRAILS_ENV_PREFIXES  no-hardcoded: colon-sep env-var name prefixes to flag as bare string
+                           literals (write the shared const instead), e.g. "MYAPP_:OTHER_"
   perf-budgets.toml        perf-budget: criterion median ceilings (run after `cargo criterion`)
   perf-history.csv         perf-record: committed per-bench history; the PR diff = the perf report
   deny.toml                cargo-deny: license allow-list + advisory ignores
