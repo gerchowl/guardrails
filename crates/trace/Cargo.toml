@@ -2,6 +2,7 @@
 name = "guardrails-trace"
 version = "0.1.0"
 edition = "2021"
+publish = false  # internal/git-dep crate, not for crates.io
 description = "One-call observability spine: EnvFilter + structured local JSONL (debug · perf-spans · audit · product trace)."
 
 [dependencies]
