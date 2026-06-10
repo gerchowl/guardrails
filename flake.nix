@@ -20,6 +20,10 @@
             case "$base" in test-*) continue ;; esac  # test harnesses aren't gates
             install -m755 "$f" "$out/bin/guardrails-$base"
           done
+          # The scripts ship `#!/usr/bin/env bash`; resolve it to a concrete store
+          # path so they run inside the Nix build sandbox (which has no /usr/bin/env)
+          # — that's what the `checks.gates` selfcheck executes on Linux CI.
+          patchShebangs $out/bin
         '';
 
         # `guardrails` consumer command — `guardrails info` is the terminal answer to
@@ -27,6 +31,7 @@
         cli = pkgs.runCommand "guardrails-cli" { } ''
           mkdir -p $out/bin
           install -m755 ${./tools/guardrails.sh} $out/bin/guardrails
+          patchShebangs $out/bin   # see gates above — sandbox has no /usr/bin/env
         '';
 
         # The shared toolbelt every consuming repo gets (build-time, zero runtime cost in the product).
@@ -46,10 +51,17 @@
       in
       {
         # Consumers: `guardrails.lib.${system}.mkDevShell { inherit pkgs; extra = [ ... ]; }`
+        #   extra : packages to add alongside the toolbelt (your toolchain).
+        #   hook  : shell script appended after the guardrails banner (your cheatsheet/exports).
+        #   env   : extra mkShell attrs — surfaced as environment variables in the dev shell
+        #           (e.g. { PLAYWRIGHT_BROWSERS_PATH = "..."; }). Without this a consumer
+        #           migrating an existing mkShell would have to `.overrideAttrs` them back on.
+        #   name  : the dev-shell derivation name (defaults to mkShell's "nix-shell").
         lib = {
           inherit gates toolbelt;
-          mkDevShell = { pkgs, extra ? [ ], hook ? "" }:
-            pkgs.mkShell {
+          mkDevShell = { pkgs, extra ? [ ], hook ? "", env ? { }, name ? "nix-shell" }:
+            pkgs.mkShell ({
+              inherit name;
               packages = toolbelt ++ extra;
               shellHook = ''
                 # Wire the git hooks if a config is present (prek is pre-commit-config compatible),
@@ -87,7 +99,7 @@
                 echo "[guardrails] escape a line with 'guardrails-ok' · run 'guardrails info' for gates + config."
                 ${hook}
               '';
-            };
+            } // env);
         };
 
         packages.gates = gates;
