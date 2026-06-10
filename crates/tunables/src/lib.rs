@@ -78,20 +78,29 @@ macro_rules! __register {
 }
 
 /// Compile-time, behaviour-defining constant — registered + justified.
-/// `const_tunable!(pub const FRICTION: f32 = 1.6; "arcball decay ~2s to settle");`
+/// `const_tunable!(pub const FRICTION: f32 = 1.6, "arcball decay ~2s to settle");`
+///
+/// **Why a comma (not `;`) before the reason:** the original `= 1.6; "reason"` form was
+/// rustfmt-HOSTILE — rustfmt parses the parenthesized contents as items and rewrites them into
+/// `= 1.6;, "reason"`, which matches no macro arm, so a plain `cargo fmt` broke the build (and
+/// guardrails itself gates `rustfmt --check`…). The comma form starts with `pub`/`const`, which
+/// rustfmt can't parse as an expression list, so it leaves the invocation verbatim — proven
+/// fmt-stable in production use. The `;` arm is deliberately NOT kept for compatibility: any
+/// `;` call site self-destructs on the consumer's first `cargo fmt`.
 #[macro_export]
 macro_rules! const_tunable {
-    ($(#[$m:meta])* $vis:vis const $name:ident : $ty:ty = $val:expr; $reason:expr $(;)?) => {
+    ($(#[$m:meta])* $vis:vis const $name:ident : $ty:ty = $val:expr, $reason:expr $(,)?) => {
         $(#[$m])* $vis const $name: $ty = $val;
         $crate::__register!($name, $val, Const, $reason);
     };
 }
 
 /// Operator/deploy-tunable default — registered, and meant to be backed by your config layer.
-/// `config!(pub const GALAXY_N: u32 = 500_000; "startup particle count");`
+/// `config!(pub const GALAXY_N: u32 = 500_000, "startup particle count");`
+/// (Comma separator — see [`const_tunable!`] on rustfmt stability.)
 #[macro_export]
 macro_rules! config {
-    ($(#[$m:meta])* $vis:vis const $name:ident : $ty:ty = $val:expr; $reason:expr $(;)?) => {
+    ($(#[$m:meta])* $vis:vis const $name:ident : $ty:ty = $val:expr, $reason:expr $(,)?) => {
         $(#[$m])* $vis const $name: $ty = $val;
         $crate::__register!($name, $val, Config, $reason);
     };
@@ -135,8 +144,10 @@ pub fn write_markdown(path: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    const_tunable!(const SAMPLE_FRICTION: f32 = 1.6; "test: arcball decay");
-    config!(const SAMPLE_N: u32 = 500_000; "test: startup count");
+    const_tunable!(const SAMPLE_FRICTION: f32 = 1.6, "test: arcball decay");
+    config!(const SAMPLE_N: u32 = 500_000, "test: startup count");
+    const_tunable!(pub const SAMPLE_GAIN: f32 = 0.01, "test: comma form with visibility");
+    config!(const SAMPLE_W: u32 = 256, "test: comma form config");
 
     #[test]
     fn constants_are_usable_everywhere() {
@@ -151,6 +162,17 @@ mod tests {
         let names: Vec<_> = all().iter().map(|t| t.name).collect();
         assert!(names.contains(&"SAMPLE_FRICTION"));
         assert!(names.contains(&"SAMPLE_N"));
+        assert!(
+            names.contains(&"SAMPLE_GAIN"),
+            "comma form must register too"
+        );
+        assert!(names.contains(&"SAMPLE_W"));
+    }
+
+    #[test]
+    fn comma_form_consts_usable() {
+        assert_eq!(SAMPLE_GAIN, 0.01);
+        assert_eq!(SAMPLE_W, 256);
     }
 
     #[cfg(all(feature = "registry", not(target_arch = "wasm32")))]
