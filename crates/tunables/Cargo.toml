@@ -5,5 +5,12 @@ edition = "2021"
 publish = false  # internal/git-dep crate, not for crates.io
 description = "Declare tunables at the definition site; they auto-register into one scannable registry (generated TUNABLES.md). The decorator→registry that retires hand-maintained allowlists."
 
+[features]
+default = ["registry"]
+# The inventory-backed registry (all()/render_markdown). Macros work without it — they just emit
+# the consts and register nothing — so wasm consumers can use default-features = false. On wasm the
+# registration is also target-gated out even with the feature on (see lib.rs).
+registry = ["dep:inventory"]
+
 [dependencies]
-inventory = "0.3"
+inventory = { version = "0.3", optional = true }
