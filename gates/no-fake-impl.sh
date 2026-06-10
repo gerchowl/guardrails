@@ -14,7 +14,7 @@ files() {
 }
 while IFS= read -r f; do
   case "$f" in *.rs|*.ts|*.tsx|*.js|*.mjs|*.py|*.go) ;; *) continue ;; esac
-  case "$f" in *gates/*|*/tests/*|*_test.*|*.test.*|*/examples/*) continue ;; esac
+  case "$f" in *gates/*|tests/*|*/tests/*|*_test.*|*.test.*|examples/*|*/examples/*) continue ;; esac
   while IFS=: read -r no line; do
     case "$line" in *guardrails-ok*) continue ;; esac
     printf '  %s:%s:%s\n' "$f" "$no" "$(printf '%s' "$line" | sed 's/^[[:space:]]*//')"

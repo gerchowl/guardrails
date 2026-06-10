@@ -16,7 +16,7 @@ IFS=: read -ra output_globs <<< "${GUARDRAILS_OUTPUT_GLOBS:-}"
 # A path is an allowed output surface if it's a built-in entrypoint/test path, or matches one of
 # the repo-configured GUARDRAILS_OUTPUT_GLOBS.
 allowed_output() {
-  case "$1" in *gates/*|*/tests/*|*_test.*|*.test.*|*/examples/*|*/main.rs|*/bin/*) return 0 ;; esac
+  case "$1" in *gates/*|tests/*|*/tests/*|*_test.*|*.test.*|examples/*|*/examples/*|main.rs|*/main.rs|bin/*|*/bin/*) return 0 ;; esac
   local g
   for g in "${output_globs[@]}"; do
     [ -n "$g" ] || continue

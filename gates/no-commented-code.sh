@@ -13,7 +13,7 @@ files() {
 }
 while IFS= read -r f; do
   case "$f" in *.rs|*.ts|*.tsx|*.js|*.mjs|*.go) ;; *) continue ;; esac
-  case "$f" in *gates/*|*/tests/*) continue ;; esac
+  case "$f" in *gates/*|tests/*|*/tests/*) continue ;; esac
   # `//` (not /// or //!) followed by something ending in ; { or } → looks like commented-out code.
   while IFS=: read -r no line; do
     case "$line" in *guardrails-ok*) continue ;; esac
