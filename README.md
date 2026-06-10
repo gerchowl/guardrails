@@ -57,6 +57,9 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
   - `perf-record` — append per-bench medians to a committed `perf-history.csv`. The **PR diff is the
     perf report**; git history is the trend — no external service. Flow:
     `cargo criterion && guardrails-perf-record && guardrails-perf-budget`, then commit the CSV.
+    Bespoke (non-criterion) harnesses join via a flat `GUARDRAILS_PERF_RESULTS` JSON map
+    (`{"bench_id": value}`) with unit-agnostic `budget` keys and `direction = "higher"` for
+    higher-is-better metrics (fps/throughput ceilings — the budget is a floor).
   - + off-the-shelf in `.pre-commit-config.yaml`: gitleaks, rustfmt, clippy `-D warnings`, cargo-deny.
   - Escape hatch on any line: `guardrails-ok`. **`guardrails info`** prints the gates + every config knob.
 - **Toolbelt** (`lib.mkDevShell`): `guardrails` (info), prek, gitleaks, cargo-deny, cargo-machete,

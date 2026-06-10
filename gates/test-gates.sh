@@ -124,6 +124,21 @@ GUARDRAILS_PERF_COMMIT=bbb2 GUARDRAILS_PERF_DATE=D3 "$rec" "$rcsv" "$pdir/under.
 if [ "$(grep -c 'bbb2,grp/fast,' "$rcsv")" = 1 ]; then echo "ok    — perf-record dedups rows per commit"
 else echo "FAIL  — perf-record duplicated rows for a commit"; fails=$((fails + 1)); fi
 
+# --- perf: bespoke results map + higher-is-better budgets --------------------------
+# A GPU fps-ceiling style metric: budget is a FLOOR, results come from a JSON map (no criterion).
+printf '{"gpu/ceiling": 850000, "gpu/fast": 1300000}\n' > "$pdir/results.json"  # 850k < 1M floor −10%
+printf '[bench."gpu/ceiling"]\nbudget=1000000\nmode="gate"\ndirection="higher"\ntolerance=0.10\n' > "$pdir/floor-bad.toml"
+printf '[bench."gpu/fast"]\nbudget=1000000\nmode="gate"\ndirection="higher"\ntolerance=0.10\n' > "$pdir/floor-good.toml"
+GUARDRAILS_PERF_RESULTS="$pdir/results.json" "$perf_gate" "$pdir/floor-bad.toml" "$pdir/crit" >/dev/null 2>&1
+if [ $? = 1 ]; then echo "ok    — perf-budget gates a higher-is-better metric below its floor"
+else echo "FAIL  — higher-direction floor not gated"; fails=$((fails + 1)); fi
+GUARDRAILS_PERF_RESULTS="$pdir/results.json" "$perf_gate" "$pdir/floor-good.toml" "$pdir/crit" >/dev/null 2>&1
+if [ $? = 0 ]; then echo "ok    — perf-budget passes a higher-is-better metric above its floor"
+else echo "FAIL  — higher-direction pass case failed"; fails=$((fails + 1)); fi
+GUARDRAILS_PERF_RESULTS="$pdir/results.json" GUARDRAILS_PERF_COMMIT=ccc3 GUARDRAILS_PERF_DATE=D4 \
+  "$rec" "$rcsv" "$pdir/floor-good.toml" "$pdir/crit" >/dev/null 2>&1
+check_csv "perf-record ingests bespoke results too" 'ccc3,gpu/ceiling,850000,,'
+
 # --- no-hardcoded: token-level floats, underscores, paths-in-strings, env prefixes ---
 hard_gate="$here/no-hardcoded.sh"
 hard_assert() { # desc, want-exit, env(or --), file-content
