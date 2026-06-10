@@ -10,7 +10,23 @@
 //!     to be backed by your config layer (RON/env).
 //!
 //! Both land in the same registry → assess every magic value from one file, never grep the codebase.
+//!
+//! ## wasm / no-registry consumers
+//!
+//! The registry rides on `inventory` (link-time collection), which `wasm32` targets don't support.
+//! The macros still work everywhere: on wasm the registration expands to nothing and only the
+//! `const` is emitted, so **a crate built for BOTH native and wasm (a GPU sim compiled to a browser
+//! fixture, say) declares its knobs once** — native builds register them, wasm builds just get the
+//! constants. If a target chokes on merely *compiling* `inventory`, depend per-target:
+//!
+//! ```toml
+//! [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+//! guardrails-tunables = { git = "…" }
+//! [target.'cfg(target_arch = "wasm32")'.dependencies]
+//! guardrails-tunables = { git = "…", default-features = false }
+//! ```
 
+#[cfg(all(feature = "registry", not(target_arch = "wasm32")))]
 pub use inventory;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +46,36 @@ pub struct Tunable {
     pub module: &'static str,
 }
 
+#[cfg(all(feature = "registry", not(target_arch = "wasm32")))]
 inventory::collect!(Tunable);
+
+/// Registration plumbing behind [`const_tunable!`]/[`config!`] — registers on native builds with
+/// the `registry` feature (default), expands to nothing on wasm / `default-features = false`.
+/// The cfg sits on the macro DEFINITIONS, so it resolves against THIS crate's build for the active
+/// target — consumers never need feature plumbing of their own.
+#[cfg(all(feature = "registry", not(target_arch = "wasm32")))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __register {
+    ($name:ident, $val:expr, $kind:ident, $reason:expr) => {
+        $crate::inventory::submit! {
+            $crate::Tunable {
+                name: stringify!($name),
+                repr: stringify!($val),
+                kind: $crate::Kind::$kind,
+                reason: $reason,
+                module: module_path!(),
+            }
+        }
+    };
+}
+
+#[cfg(not(all(feature = "registry", not(target_arch = "wasm32"))))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __register {
+    ($name:ident, $val:expr, $kind:ident, $reason:expr) => {};
+}
 
 /// Compile-time, behaviour-defining constant — registered + justified.
 /// `const_tunable!(pub const FRICTION: f32 = 1.6; "arcball decay ~2s to settle");`
@@ -38,15 +83,7 @@ inventory::collect!(Tunable);
 macro_rules! const_tunable {
     ($(#[$m:meta])* $vis:vis const $name:ident : $ty:ty = $val:expr; $reason:expr $(;)?) => {
         $(#[$m])* $vis const $name: $ty = $val;
-        $crate::inventory::submit! {
-            $crate::Tunable {
-                name: stringify!($name),
-                repr: stringify!($val),
-                kind: $crate::Kind::Const,
-                reason: $reason,
-                module: module_path!(),
-            }
-        }
+        $crate::__register!($name, $val, Const, $reason);
     };
 }
 
@@ -56,28 +93,20 @@ macro_rules! const_tunable {
 macro_rules! config {
     ($(#[$m:meta])* $vis:vis const $name:ident : $ty:ty = $val:expr; $reason:expr $(;)?) => {
         $(#[$m])* $vis const $name: $ty = $val;
-        $crate::inventory::submit! {
-            $crate::Tunable {
-                name: stringify!($name),
-                repr: stringify!($val),
-                kind: $crate::Kind::Config,
-                reason: $reason,
-                module: module_path!(),
-            }
-        }
+        $crate::__register!($name, $val, Config, $reason);
     };
 }
 
 /// Every registered tunable in the linked binary (sorted: Config first, then by module/name).
+#[cfg(all(feature = "registry", not(target_arch = "wasm32")))]
 pub fn all() -> Vec<&'static Tunable> {
     let mut v: Vec<&'static Tunable> = inventory::iter::<Tunable>().into_iter().collect();
-    v.sort_by(|a, b| {
-        (a.kind as u8, a.module, a.name).cmp(&(b.kind as u8, b.module, b.name))
-    });
+    v.sort_by(|a, b| (a.kind as u8, a.module, a.name).cmp(&(b.kind as u8, b.module, b.name)));
     v
 }
 
 /// Render the registry as the `TUNABLES.md` audit surface.
+#[cfg(all(feature = "registry", not(target_arch = "wasm32")))]
 pub fn render_markdown() -> String {
     let mut s = String::from(
         "# Tunables registry\n\n_Generated from `const_tunable!`/`config!` — do not edit by hand._\n\n\
@@ -97,6 +126,7 @@ pub fn render_markdown() -> String {
 }
 
 /// Write `TUNABLES.md` (or any path).
+#[cfg(all(feature = "registry", not(target_arch = "wasm32")))]
 pub fn write_markdown(path: &str) -> std::io::Result<()> {
     std::fs::write(path, render_markdown())
 }
@@ -109,15 +139,21 @@ mod tests {
     config!(const SAMPLE_N: u32 = 500_000; "test: startup count");
 
     #[test]
-    fn registered_and_enumerable() {
-        let names: Vec<_> = all().iter().map(|t| t.name).collect();
-        assert!(names.contains(&"SAMPLE_FRICTION"));
-        assert!(names.contains(&"SAMPLE_N"));
-        // values are usable as real constants
+    fn constants_are_usable_everywhere() {
+        // The consts exist regardless of registry availability (wasm / default-features = false).
         assert_eq!(SAMPLE_FRICTION, 1.6);
         assert_eq!(SAMPLE_N, 500_000);
     }
 
+    #[cfg(all(feature = "registry", not(target_arch = "wasm32")))]
+    #[test]
+    fn registered_and_enumerable() {
+        let names: Vec<_> = all().iter().map(|t| t.name).collect();
+        assert!(names.contains(&"SAMPLE_FRICTION"));
+        assert!(names.contains(&"SAMPLE_N"));
+    }
+
+    #[cfg(all(feature = "registry", not(target_arch = "wasm32")))]
     #[test]
     fn markdown_has_entries_and_kinds() {
         let md = render_markdown();
