@@ -56,6 +56,24 @@ assert "guardrails-ok annotation suppresses" 0 -- "$tmp/src/annotated.rs"
 printf 'fn f() -> u32 { 1 + 1 }\n' > "$tmp/src/clean.rs"
 assert "clean code passes" 0 -- "$tmp/src/clean.rs"
 
+# --- no-fake-impl: stub markers flagged, vocabulary/strings are not ----------
+fake_gate="$here/no-fake-impl.sh"
+fake_assert() { # desc, want-exit, file-content
+  printf '%s\n' "$3" > "$tmp/src/fake.rs"
+  "$fake_gate" "$tmp/src/fake.rs" >/dev/null 2>&1
+  if [ "$?" = "$2" ]; then echo "ok    — $1"; else echo "FAIL  — $1"; fails=$((fails + 1)); fi
+}
+fake_assert "todo!() is flagged"                    1 'fn f() { todo!() }'
+fake_assert "unimplemented!() is flagged"           1 'fn f() { unimplemented!() }'
+fake_assert "FIXME marker is flagged"               1 'fn f() {} // FIXME finish this'
+fake_assert "// placeholder comment is flagged"     1 'fn f() {} // placeholder'
+fake_assert "placeholder implementation is flagged" 1 '// placeholder implementation for now'
+fake_assert "PLACEHOLDER protocol const is allowed" 0 'const KITTY_UNICODE_PLACEHOLDER: u32 = 0xfffd;'
+fake_assert "placeholder sentinel var is allowed"   0 'let placeholder = PaneId::from_raw(0);'
+fake_assert "not-implemented error string allowed"  0 'return Err("method not implemented yet".into());'
+fake_assert "placeholder in doc-comment prose ok"   0 '/// Uses the placeholder protocol to render.'
+fake_assert "doc comment starting with placeholder prose ok" 0 '///   placeholder and other things are kept'
+
 # --- top-level tests/ excluded for RELATIVE paths (as pre-commit passes them) -
 # `*/tests/*` matched only NESTED tests dirs; a relative `tests/x.rs` slipped
 # through. Each gate must exclude a top-level tests/ component too.
