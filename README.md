@@ -20,7 +20,7 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
 
 - **Gates** (`gates/*.sh`, on PATH as `guardrails-<name>`, run by `prek`):
   - `no-fake-impl` — `todo!`/`unimplemented!`/stub/placeholder/FIXME (deceptive "done"). **GATE**
-  - `no-debug-leftovers` — `dbg!`/`println!`/`console.log` outside main/bin/tests. **GATE**
+  - `no-debug-leftovers` — `dbg!`/`print!`/`println!`/`eprint!`/`eprintln!`/`console.log` outside main/bin/tests. **GATE** (CLI output surfaces: set `GUARDRAILS_OUTPUT_GLOBS="*/cli/*:..."` to allow them.)
   - `no-commented-code` — commented-out code graveyards. **GATE**
   - + off-the-shelf in `.pre-commit-config.yaml`: gitleaks, rustfmt, clippy `-D warnings`, cargo-deny.
   - Escape hatch on any line: `guardrails-ok`.

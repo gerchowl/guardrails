@@ -15,6 +15,10 @@ jobs:
       - name: gates
         run: nix flake check -L
 
+      # Gate semantics: red-green fixtures (catch/allow) so the detectors can't silently regress.
+      - name: gate tests
+        run: ./gates/test-gates.sh
+
       # Tunables crate: tests + the registry must be regenerated and committed (can't drift).
       - name: tunables tests
         run: nix develop -c bash -c 'cd crates/tunables && cargo test'
