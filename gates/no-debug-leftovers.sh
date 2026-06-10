@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # guardrails: no debug-print leftovers — force the logging/tracing facade, not stdout spew.
 # Flags dbg!()/print!()/println!()/eprint!()/eprintln!() (Rust) and console.log/debug + print(
-# (TS/JS/Py) in lib/app code. Always allowed in main/bin/tests/examples, and on any line
-# annotated `guardrails-ok`.
+# (TS/JS/Py) in lib/app code. Always allowed in main.rs/build.rs/bin/tests/examples (build.rs
+# uses println! for cargo: directives), and on any line annotated `guardrails-ok`.
 #
 # CLI tools legitimately write to stdout/stderr. Set GUARDRAILS_OUTPUT_GLOBS to a colon-separated
 # list of path globs for those output surfaces (e.g. "*/cli/*:*/cli.rs:*/update.rs") so the gate
@@ -16,7 +16,7 @@ IFS=: read -ra output_globs <<< "${GUARDRAILS_OUTPUT_GLOBS:-}"
 # A path is an allowed output surface if it's a built-in entrypoint/test path, or matches one of
 # the repo-configured GUARDRAILS_OUTPUT_GLOBS.
 allowed_output() {
-  case "$1" in *gates/*|tests/*|*/tests/*|*_test.*|*.test.*|examples/*|*/examples/*|main.rs|*/main.rs|bin/*|*/bin/*) return 0 ;; esac
+  case "$1" in *gates/*|tests/*|*/tests/*|*_test.*|*.test.*|examples/*|*/examples/*|main.rs|*/main.rs|build.rs|*/build.rs|bin/*|*/bin/*) return 0 ;; esac
   local g
   for g in "${output_globs[@]}"; do
     [ -n "$g" ] || continue
