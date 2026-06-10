@@ -67,6 +67,26 @@ for gate in no-debug-leftovers no-fake-impl no-commented-code; do
   else echo "FAIL  — $gate flags top-level tests/ (relative)"; fails=$((fails + 1)); fi
 done
 
+# --- perf-budget gate ---------------------------------------------------------
+# Synthesize criterion estimates + budgets; assert gate/nudge/skip semantics.
+perf_gate="$here/perf-budget.sh"
+pdir="$tmp/perf"
+mkdir -p "$pdir/crit/grp/fast/new" "$pdir/crit/grp/slow/new"
+printf '{"median":{"point_estimate":900.0}}\n'  > "$pdir/crit/grp/fast/new/estimates.json"  # under
+printf '{"median":{"point_estimate":1500.0}}\n' > "$pdir/crit/grp/slow/new/estimates.json"  # over 1000+20%
+
+perf_assert() { # desc, want-exit, budgets-file
+  "$perf_gate" "$3" "$pdir/crit" >/dev/null 2>&1
+  if [ "$?" = "$2" ]; then echo "ok    — $1"; else echo "FAIL  — $1"; fails=$((fails + 1)); fi
+}
+printf 'default_tolerance=0.20\n[bench."grp/fast"]\nbudget_ns=1000\nmode="gate"\n'  > "$pdir/under.toml"
+printf 'default_tolerance=0.20\n[bench."grp/slow"]\nbudget_ns=1000\nmode="gate"\n'  > "$pdir/gate.toml"
+printf 'default_tolerance=0.20\n[bench."grp/slow"]\nbudget_ns=1000\nmode="nudge"\n' > "$pdir/nudge.toml"
+perf_assert "perf-budget passes under budget"            0 "$pdir/under.toml"
+perf_assert "perf-budget gates an over-budget regression" 1 "$pdir/gate.toml"
+perf_assert "perf-budget nudge mode warns, never blocks"  0 "$pdir/nudge.toml"
+perf_assert "perf-budget skips when no budgets file"      0 "$pdir/missing.toml"
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2

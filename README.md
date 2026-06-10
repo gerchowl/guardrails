@@ -22,10 +22,12 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
   - `no-fake-impl` — `todo!`/`unimplemented!`/stub/placeholder/FIXME (deceptive "done"). **GATE**
   - `no-debug-leftovers` — `dbg!`/`print!`/`println!`/`eprint!`/`eprintln!`/`console.log` outside main/bin/tests. **GATE** (CLI output surfaces: set `GUARDRAILS_OUTPUT_GLOBS="*/cli/*:..."` to allow them.)
   - `no-commented-code` — commented-out code graveyards. **GATE**
+  - `perf-budget` — gate criterion regressions against a checked-in `perf-budgets.toml`. **GATE/NUDGE**
+    (CI-deep, not pre-commit: run after `cargo criterion`; gate big regressions, nudge the rest.)
   - + off-the-shelf in `.pre-commit-config.yaml`: gitleaks, rustfmt, clippy `-D warnings`, cargo-deny.
   - Escape hatch on any line: `guardrails-ok`.
 - **Toolbelt** (`lib.mkDevShell`): prek, gitleaks, cargo-deny, cargo-machete, cargo-mutants,
-  cargo-bloat, tokei.
+  cargo-bloat, cargo-criterion, tokei, python3.
 - **`checks`**: `nix flake check` runs the gates over this repo.
 - **`templates.default`**: a consumer flake + config.
 - **Conventions** (`docs/CONVENTIONS.md`): the gate/nudge/CI matrix, the tracing spine (logging
@@ -45,8 +47,11 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
    `EnvFilter` + structured local
    JSONL layer + the level contract, with `release_max_level_*` + `profiling`/`dhat` features
    pre-wired (Tier-1/2/3 from CONVENTIONS). One drop-in for the whole observability spine.
-3. **Perf harness wiring** — criterion + CodSpeed CI action + a `perf-budgets` file + gate, with the
-   honest-measurement methodology baked in.
+3. ~~**Perf harness wiring**~~ ✅ **shipped** — the `perf-budget` gate (`gates/perf-budget.sh`)
+   compares criterion medians against a checked-in `perf-budgets.toml` (template provided);
+   `cargo-criterion` in the toolbelt; gate big regressions / nudge the rest, per the
+   honest-measurement methodology in `docs/CONVENTIONS.md`. *Next:* a CodSpeed CI action for
+   noise-immune history (instruction-count sandbox) and a starter `benches/` example.
 4. **mutation-testing CI** — `cargo-mutants` job (test-quality signal vs coverage theater).
 5. **duplication nudge** — token-based clone detector (reinvention-vs-reuse), tuned threshold.
 6. **diff blast-radius nudge** — flag PRs sprawling across unrelated areas.
