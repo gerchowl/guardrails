@@ -40,6 +40,10 @@ done
 printf 'fn main() { println!("hi"); print!("p"); }\n' > "$tmp/src/main.rs"
 assert "main.rs is allowed" 0 -- "$tmp/src/main.rs"
 
+# build.rs legitimately uses println! for cargo: directives.
+printf 'fn main() { println!("cargo:rerun-if-changed=build.rs"); }\n' > "$tmp/build.rs"
+assert "build.rs is allowed" 0 -- "$tmp/build.rs"
+
 printf 'pub fn show() { println!("status"); }\n' > "$tmp/src/cli/show.rs"
 assert "cli/ flagged WITHOUT output-glob" 1 -- "$tmp/src/cli/show.rs"
 assert "cli/ allowed WITH GUARDRAILS_OUTPUT_GLOBS" 0 \
