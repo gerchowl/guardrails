@@ -52,6 +52,17 @@ assert "guardrails-ok annotation suppresses" 0 -- "$tmp/src/annotated.rs"
 printf 'fn f() -> u32 { 1 + 1 }\n' > "$tmp/src/clean.rs"
 assert "clean code passes" 0 -- "$tmp/src/clean.rs"
 
+# --- top-level tests/ excluded for RELATIVE paths (as pre-commit passes them) -
+# `*/tests/*` matched only NESTED tests dirs; a relative `tests/x.rs` slipped
+# through. Each gate must exclude a top-level tests/ component too.
+mkdir -p "$tmp/tests"
+printf 'fn f() { eprintln!("x"); todo!(); } // %s\n' 'commented: let x = 1;' > "$tmp/tests/leak.rs"
+for gate in no-debug-leftovers no-fake-impl no-commented-code; do
+  ( cd "$tmp" && "$here/$gate.sh" tests/leak.rs >/dev/null 2>&1 )
+  if [ $? = 0 ]; then echo "ok    — $gate excludes top-level tests/ (relative)"
+  else echo "FAIL  — $gate flags top-level tests/ (relative)"; fails=$((fails + 1)); fi
+done
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2
