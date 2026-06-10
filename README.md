@@ -19,15 +19,16 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
 ## What's wired (this MVP)
 
 - **Gates** (`gates/*.sh`, on PATH as `guardrails-<name>`, run by `prek`):
-  - `no-fake-impl` — `todo!`/`unimplemented!`/stub/placeholder/FIXME (deceptive "done"). **GATE**
+  - `no-fake-impl` — `todo!`/`unimplemented!`/`FIXME`/`placeholder impl` (deceptive "done"). **GATE**
   - `no-debug-leftovers` — `dbg!`/`print!`/`println!`/`eprint!`/`eprintln!`/`console.log` outside main/bin/tests. **GATE** (CLI output surfaces: set `GUARDRAILS_OUTPUT_GLOBS="*/cli/*:..."` to allow them.)
   - `no-commented-code` — commented-out code graveyards. **GATE**
+  - `no-hardcoded` — magic values that should be tunables (`src/` only; bless prefixes in `guardrails-allow.txt`). **GATE**
   - `perf-budget` — gate criterion regressions against a checked-in `perf-budgets.toml`. **GATE/NUDGE**
     (CI-deep, not pre-commit: run after `cargo criterion`; gate big regressions, nudge the rest.)
   - + off-the-shelf in `.pre-commit-config.yaml`: gitleaks, rustfmt, clippy `-D warnings`, cargo-deny.
-  - Escape hatch on any line: `guardrails-ok`.
-- **Toolbelt** (`lib.mkDevShell`): prek, gitleaks, cargo-deny, cargo-machete, cargo-mutants,
-  cargo-bloat, cargo-criterion, tokei, python3.
+  - Escape hatch on any line: `guardrails-ok`. **`guardrails info`** prints the gates + every config knob.
+- **Toolbelt** (`lib.mkDevShell`): `guardrails` (info), prek, gitleaks, cargo-deny, cargo-machete,
+  cargo-mutants, cargo-bloat, cargo-criterion, tokei, python3.
 - **`checks`**: `nix flake check` runs the gates over this repo.
 - **`templates.default`**: a consumer flake + config.
 - **Conventions** (`docs/CONVENTIONS.md`): the gate/nudge/CI matrix, the tracing spine (logging
