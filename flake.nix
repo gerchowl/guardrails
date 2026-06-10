@@ -45,7 +45,13 @@
                 # then wrap prek's hook so it self-bootstraps THIS devShell: merges, worktrees, and
                 # plain shells commit without it active, which would otherwise error on the gate
                 # binaries (guardrails-*) not being on PATH and force a --no-verify.
-                if [ -f .pre-commit-config.yaml ] && [ -d .git ]; then
+                # `[ -d .git ]` would skip linked worktrees, where .git is a FILE pointing at
+                # the gitdir — so hooks never auto-wired there and every worktree commit ran
+                # without the gates. Detect the repo the worktree-safe way instead; hooks live
+                # in the shared common dir (git rev-parse --git-path hooks resolves to it), so
+                # installing from any worktree covers the whole repo. Idempotent via the
+                # bootstrap grep below.
+                if [ -f .pre-commit-config.yaml ] && git rev-parse --git-dir >/dev/null 2>&1; then
                   hd="$(git rev-parse --git-path hooks 2>/dev/null)"
                   f="$hd/pre-commit"
                   # Set up ONCE. If our bootstrap is already injected, leave the hook alone:
