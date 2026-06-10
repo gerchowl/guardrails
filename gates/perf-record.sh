@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # guardrails: perf-record — append a perf report row per benchmark to a committed CSV.
 #
-# Run after `cargo criterion`. Parses criterion's medians and writes one row per benchmark to
-# perf-history.csv (created if missing). Commit that CSV: the PR diff IS the perf report, and git
-# history IS the trend — no external service. Pairs with the perf-budget gate (absolute ceilings);
+# Run after your benches. Records criterion medians AND bespoke-harness results (the same
+# GUARDRAILS_PERF_RESULTS flat JSON map perf-budget reads — GPU fps ceilings, MB/s, …), one row per
+# benchmark, into perf-history.csv (created if missing). Commit that CSV: the PR diff IS the perf
+# report, and git history IS the trend — no external service. Pairs with the perf-budget gate;
 # this is the visible per-PR delta + history. Re-running on the same commit refreshes its rows.
 #
 # Usage: guardrails-perf-record [perf-history.csv] [perf-budgets.toml] [target/criterion]
 # Columns: date,commit,bench,median_ns,budget_ns,vs_budget_pct,vs_prev_pct
+#   (for bespoke results the value columns carry the harness's own unit, not ns)
 set -uo pipefail
 csv="${1:-perf-history.csv}"
 budgets="${2:-perf-budgets.toml}"
@@ -21,7 +23,7 @@ fi
 now="${GUARDRAILS_PERF_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 exec python3 - "$csv" "$budgets" "$crit_dir" "$commit" "$now" <<'PY'
-import csv, json, pathlib, sys
+import csv, json, os, pathlib, sys
 csv_path, budgets_path, crit_dir, commit, now = sys.argv[1:6]
 crit = pathlib.Path(crit_dir)
 header = ["date", "commit", "bench", "median_ns", "budget_ns", "vs_budget_pct", "vs_prev_pct"]
@@ -32,7 +34,8 @@ if bp.exists():
     try:
         import tomllib
         for bid, cfg in tomllib.loads(bp.read_text()).get("bench", {}).items():
-            budgets[bid] = float(cfg["budget_ns"])
+            if "budget_ns" in cfg or "budget" in cfg:
+                budgets[bid] = float(cfg.get("budget_ns", cfg.get("budget")))
     except Exception:
         pass
 
@@ -64,8 +67,27 @@ for est in sorted(crit.glob("**/new/estimates.json")):
         "budget_ns": f"{budget:.0f}" if budget else "", "vs_budget_pct": vsb, "vs_prev_pct": vsp,
     })
 
+# Bespoke-harness results (same map perf-budget reads): rows for benches criterion didn't cover.
+rp = pathlib.Path(os.environ.get("GUARDRAILS_PERF_RESULTS", "perf-results.json"))
+if rp.exists():
+    try:
+        bespoke = {str(k): float(v) for k, v in json.loads(rp.read_text()).items()}
+    except (ValueError, AttributeError):
+        bespoke = {}
+    seen = {r["bench"] for r in new_rows}
+    for bid, val in sorted(bespoke.items()):
+        if bid in seen:
+            continue
+        budget = budgets.get(bid)
+        vsb = f"{(val / budget - 1) * 100:+.1f}" if budget else ""
+        vsp = f"{(val / prev[bid] - 1) * 100:+.1f}" if bid in prev else ""
+        new_rows.append({
+            "date": now, "commit": commit, "bench": bid, "median_ns": f"{val:.0f}",
+            "budget_ns": f"{budget:.0f}" if budget else "", "vs_budget_pct": vsb, "vs_prev_pct": vsp,
+        })
+
 if not new_rows:
-    sys.stderr.write(f"guardrails/perf-record: no criterion results under {crit_dir} — run `cargo criterion` first.\n")
+    sys.stderr.write(f"guardrails/perf-record: no criterion results under {crit_dir} and no {rp} — run the benches first.\n")
     sys.exit(0)
 
 kept = [r for r in existing if r["commit"] != commit]  # refresh this commit's rows
