@@ -16,8 +16,9 @@
         gates = pkgs.runCommand "guardrails-gates" { } ''
           mkdir -p $out/bin
           for f in ${./gates}/*.sh; do
-            name="guardrails-$(basename "$f" .sh)"
-            install -m755 "$f" "$out/bin/$name"
+            base="$(basename "$f" .sh)"
+            case "$base" in test-*) continue ;; esac  # test harnesses aren't gates
+            install -m755 "$f" "$out/bin/guardrails-$base"
           done
         '';
 
@@ -30,7 +31,9 @@
           cargo-machete   # unused deps
           cargo-mutants   # mutation testing (test-quality signal, CI-deep)
           cargo-bloat     # binary-size attribution (lean-endproduct)
+          cargo-criterion # statistical microbenchmarks (machine-readable runner)
           tokei           # quick LoC/scope overview
+          python3         # drives the perf-budget gate (tomllib + json, no deps)
         ];
       in
       {
