@@ -45,7 +45,13 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
   - `no-fake-impl` — `todo!`/`unimplemented!`/`FIXME`/`placeholder impl` (deceptive "done"). **GATE**
   - `no-debug-leftovers` — `dbg!`/`print!`/`println!`/`eprint!`/`eprintln!`/`console.log` outside main/bin/tests. **GATE** (CLI output surfaces: set `GUARDRAILS_OUTPUT_GLOBS="*/cli/*:..."` to allow them.)
   - `no-commented-code` — commented-out code graveyards. **GATE**
-  - `no-hardcoded` — magic values that should be tunables (`src/` only; bless prefixes in `guardrails-allow.txt`). **GATE**
+  - `no-hardcoded` — magic values that should be tunables (`src/` only; bless prefixes in
+    `guardrails-allow.txt`; token-level floats, underscored ints, `/Users//home//tmp` paths checked
+    inside strings, opt-in env-name literals via `GUARDRAILS_ENV_PREFIXES`; block escapes
+    `guardrails-ok-begin`/`-end`). **GATE**
+  - `no-conflict-markers` — committed `<<<<<<<`/`=======`/`>>>>>>>` lines (a conflicted merge CAN
+    be committed — git records it and `git status` is clean after; a real flake.nix went unevaluable
+    this way). Deterministic, no escape. **GATE**
   - `perf-budget` — gate criterion regressions against a checked-in `perf-budgets.toml`. **GATE/NUDGE**
     (CI-deep, not pre-commit: run after `cargo criterion`; gate big regressions, nudge the rest.)
   - `perf-record` — append per-bench medians to a committed `perf-history.csv`. The **PR diff is the

@@ -19,6 +19,11 @@ repos:
         entry: guardrails-no-commented-code
         language: system
         pass_filenames: true
+      - id: no-conflict-markers
+        name: no committed merge-conflict markers
+        entry: guardrails-no-conflict-markers
+        language: system
+        pass_filenames: true
       - id: gitleaks
         name: secrets scan
         entry: gitleaks protect --staged --redact -v

@@ -112,7 +112,7 @@
         checks.gates = pkgs.runCommand "guardrails-selfcheck" { buildInputs = [ gates ]; } ''
           cd ${./.}
           guardrails-no-fake-impl . && guardrails-no-debug-leftovers . \
-            && guardrails-no-commented-code . && guardrails-no-hardcoded . \
+            && guardrails-no-commented-code . && guardrails-no-hardcoded . && guardrails-no-conflict-markers . \
             && touch $out
         '';
       })
