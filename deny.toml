@@ -1,0 +1,35 @@
+# cargo-deny — dependency licenses + RUSTSEC advisories for guardrails' own crates.
+# Permissive allow-list; multiple-versions tolerated; advisories deny-by-default with an
+# explicit, auditable ignore list. (This is also what templates/default ships to consumers.)
+
+[advisories]
+version = 2
+yanked = "warn"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+private = { ignore = true }   # don't license-gate first-party (publish=false) crates
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "MPL-2.0",
+  "CC0-1.0",
+  "0BSD",
+  "BSL-1.0",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "allow"

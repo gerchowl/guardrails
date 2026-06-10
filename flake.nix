@@ -22,9 +22,17 @@
           done
         '';
 
+        # `guardrails` consumer command — `guardrails info` is the terminal answer to
+        # "what is this and what do I do?" (gates, escapes, and the config knobs).
+        cli = pkgs.runCommand "guardrails-cli" { } ''
+          mkdir -p $out/bin
+          install -m755 ${./tools/guardrails.sh} $out/bin/guardrails
+        '';
+
         # The shared toolbelt every consuming repo gets (build-time, zero runtime cost in the product).
         toolbelt = with pkgs; [
           gates
+          cli             # `guardrails info` — purpose, gates, config knobs, escapes
           prek            # fast pre-commit runner (the gate/nudge engine)
           gitleaks        # secrets
           cargo-deny      # dep licenses + RUSTSEC advisories
@@ -68,9 +76,15 @@
                       { head -1 "$f"; echo ". ${./hooks/bootstrap-pre-commit.sh}"; tail -n +2 "$f"; } > "$f.tmp" \
                         && mv "$f.tmp" "$f" && chmod +x "$f"
                     fi
+                    guardrails_installed_now=1
                   fi
                 fi
-                echo "[guardrails] gates+toolbelt ready (prek/gitleaks/cargo-deny/-machete/-mutants/-bloat)"
+                if [ -n "''${guardrails_installed_now:-}" ]; then
+                  echo "[guardrails] commit hooks installed — commits are now gated on this repo."
+                else
+                  echo "[guardrails] gates active on this repo."
+                fi
+                echo "[guardrails] escape a line with 'guardrails-ok' · run 'guardrails info' for gates + config."
                 ${hook}
               '';
             };
