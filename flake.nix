@@ -45,6 +45,7 @@
           cargo-mutants   # mutation testing (test-quality signal, CI-deep)
           cargo-bloat     # binary-size attribution (lean-endproduct)
           cargo-criterion # statistical microbenchmarks (machine-readable runner)
+          sccache         # shared compile cache — worktrees/repos inherit builds
           tokei           # quick LoC/scope overview
           python3         # drives the perf-budget gate (tomllib + json, no deps)
         ];
@@ -91,6 +92,14 @@
                     guardrails_installed_now=1
                   fi
                 fi
+                # Shared compiler-level cache across every consuming repo AND
+                # worktree: each keeps its own target/ (parallel builds stay
+                # parallel), every rustc call hits one fleet-wide cache — so a
+                # fresh worktree's first build costs ~link time, and shared
+                # deps (serde & co) compile once across projects. Opt out per
+                # shell with RUSTC_WRAPPER="".
+                export RUSTC_WRAPPER=''${RUSTC_WRAPPER-sccache}
+                export SCCACHE_CACHE_SIZE=''${SCCACHE_CACHE_SIZE:-30G}
                 if [ -n "''${guardrails_installed_now:-}" ]; then
                   echo "[guardrails] commit hooks installed — commits are now gated on this repo."
                 else
