@@ -19,6 +19,11 @@ repos:
         entry: guardrails-no-commented-code
         language: system
         pass_filenames: true
+      - id: derived-docs
+        name: derived docs match their source-of-truth command
+        entry: guardrails-derived-docs
+        language: system
+        pass_filenames: true
       - id: no-hardcoded
         name: no bare hardcoded values (wrap in const_tunable!/config!)
         entry: guardrails-no-hardcoded

@@ -52,6 +52,13 @@ The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commi
   - `no-conflict-markers` — committed `<<<<<<<`/`=======`/`>>>>>>>` lines (a conflicted merge CAN
     be committed — git records it and `git status` is clean after; a real flake.nix went unevaluable
     this way). Deterministic, no escape. **GATE**
+  - `derived-docs` — derived/generated doc regions match their source-of-truth command. Mark a
+    region in any text file with (HTML-encoded here so this README isn't itself a region):
+    `&lt;!-- guardrails:derived cmd="…" --&gt;` … `&lt;!-- guardrails:derived:end --&gt;`. The gate
+    re-runs `cmd` (cwd = repo root, via `sh -c`), normalizes whitespace, and diffs against the
+    region. Mismatch → blocks with a unified diff. Re-run with `--fix` to regenerate in place.
+    Security: marker commands run with the same trust as any pre-commit hook in the repo — review
+    them like you review `.pre-commit-config.yaml`. **GATE**
   - `perf-budget` — gate criterion regressions against a checked-in `perf-budgets.toml`. **GATE/NUDGE**
     (CI-deep, not pre-commit: run after `cargo criterion`; gate big regressions, nudge the rest.)
   - `perf-record` — append per-bench medians to a committed `perf-history.csv`. The **PR diff is the
