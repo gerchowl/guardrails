@@ -179,6 +179,54 @@ cm_assert "$tmp/setext.md" 0 "setext ======= heading alone is allowed"
 printf '%s\n' 'clean file' > "$tmp/clean.txt"
 cm_assert "$tmp/clean.txt" 0 "clean file passes"
 
+# --- derived-docs: regions match cmd output; --fix regenerates; bad markers error ---
+dd_gate="$here/derived-docs.sh"
+dd_assert() { # desc, want-exit, file, [--fix?]
+  local desc="$1" want="$2" file="$3" flag="${4:-}"
+  if [ -n "$flag" ]; then "$dd_gate" "$flag" "$file" >/dev/null 2>&1; else "$dd_gate" "$file" >/dev/null 2>&1; fi
+  local got=$?
+  if [ "$got" = "$want" ]; then echo "ok    — $desc"
+  else echo "FAIL  — $desc (want $want, got $got)"; fails=$((fails + 1)); fi
+}
+# matching region → pass
+printf '%s\n' '# t' '<!-- guardrails:derived cmd="echo hello" -->' 'hello' '<!-- guardrails:derived:end -->' \
+  > "$tmp/dd-match.md"
+dd_assert "derived-docs passes when region matches" 0 "$tmp/dd-match.md"
+# drifted region → fail
+printf '%s\n' '# t' '<!-- guardrails:derived cmd="echo hello" -->' 'goodbye' '<!-- guardrails:derived:end -->' \
+  > "$tmp/dd-drift.md"
+dd_assert "derived-docs flags drifted region" 1 "$tmp/dd-drift.md"
+# --fix roundtrip → idempotent pass after
+dd_assert "derived-docs --fix exits 0" 0 "$tmp/dd-drift.md" --fix
+dd_assert "derived-docs passes after --fix" 0 "$tmp/dd-drift.md"
+if ! grep -q '^hello$' "$tmp/dd-drift.md"; then
+  echo "FAIL  — derived-docs --fix did not rewrite body"; fails=$((fails + 1))
+else echo "ok    — derived-docs --fix rewrites the region body"; fi
+# unterminated → marker error
+printf '%s\n' '<!-- guardrails:derived cmd="echo x" -->' 'orphan' > "$tmp/dd-unterm.md"
+dd_assert "derived-docs errors on unterminated region" 1 "$tmp/dd-unterm.md"
+# nested → marker error
+printf '%s\n' '<!-- guardrails:derived cmd="echo x" -->' '<!-- guardrails:derived cmd="echo y" -->' \
+  'y' '<!-- guardrails:derived:end -->' > "$tmp/dd-nested.md"
+dd_assert "derived-docs errors on nested start markers" 1 "$tmp/dd-nested.md"
+# stray :end → marker error
+printf '%s\n' 'prose' '<!-- guardrails:derived:end -->' > "$tmp/dd-stray.md"
+dd_assert "derived-docs errors on stray :end" 1 "$tmp/dd-stray.md"
+# failing command → marker error (regions whose cmd doesn't exist can't be diffed)
+printf '%s\n' '<!-- guardrails:derived cmd="nonexistent-binary-xyzzy" -->' 'x' \
+  '<!-- guardrails:derived:end -->' > "$tmp/dd-cmdfail.md"
+dd_assert "derived-docs errors when cmd fails to run" 1 "$tmp/dd-cmdfail.md"
+# multiple regions, one drifted → fail; --fix fixes only the drifted one
+printf '%s\n' '<!-- guardrails:derived cmd="echo one" -->' 'one' '<!-- guardrails:derived:end -->' \
+  '' '<!-- guardrails:derived cmd="echo two" -->' 'TWO' '<!-- guardrails:derived:end -->' \
+  > "$tmp/dd-multi.md"
+dd_assert "derived-docs flags one drifted of two regions" 1 "$tmp/dd-multi.md"
+dd_assert "derived-docs --fix repairs multi-region file"  0 "$tmp/dd-multi.md" --fix
+dd_assert "derived-docs passes after multi-region fix"    0 "$tmp/dd-multi.md"
+# file without any markers → no work, pass
+printf '%s\n' 'plain prose with no markers at all' > "$tmp/dd-none.md"
+dd_assert "derived-docs ignores files without markers" 0 "$tmp/dd-none.md"
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2

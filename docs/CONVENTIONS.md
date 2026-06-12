@@ -11,6 +11,7 @@ rest, run deep checks async.* This doc is the contract; `flake.nix` ships the to
 | no-fake-impl (`todo!`/stub/placeholder) | deceptive "done" | **GATE** |
 | no-debug-leftovers (`dbg!`/println/console.log) | stdout spew instead of facade | **GATE** |
 | no-commented-code | code graveyards | **GATE** |
+| derived-docs (marker-driven) | docs drift from generator output | **GATE** |
 | gitleaks | committed secrets | **GATE** |
 | rustfmt --check, clippy -D warnings | drift from baseline | **GATE** |
 | no-hardcoded-values → tunables registry | magic-number scatter | **GATE** (see below) |

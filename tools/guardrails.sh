@@ -16,6 +16,8 @@ GATES — block a commit unless escaped:
   no-commented-code   commented-out code graveyards
   no-hardcoded        magic values that should be tunables (src/ only)
   no-conflict-markers committed <<<<<<</=======/>>>>>>> merge-marker lines (no escape — never legitimate)
+  derived-docs        regions marked `<!-- guardrails:derived cmd="…" -->` must match `cmd`'s output
+                      (re-run with --fix to regenerate; commands run with repo-hook trust)
   + gitleaks · rustfmt · clippy -D warnings · cargo-deny
 CI-deep (not pre-commit) — run after `cargo criterion`:
   perf-budget         gate criterion regressions over a checked-in perf-budgets.toml
