@@ -122,6 +122,7 @@
           cd ${./.}
           guardrails-no-fake-impl . && guardrails-no-debug-leftovers . \
             && guardrails-no-commented-code . && guardrails-no-hardcoded . && guardrails-no-conflict-markers . \
+            && guardrails-derived-docs . \
             && touch $out
         '';
       })
