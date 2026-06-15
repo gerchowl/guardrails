@@ -77,19 +77,29 @@
                 # bootstrap grep below.
                 if [ -f .pre-commit-config.yaml ] && git rev-parse --git-dir >/dev/null 2>&1; then
                   hd="$(git rev-parse --git-path hooks 2>/dev/null)"
-                  f="$hd/pre-commit"
-                  # Set up ONCE. If our bootstrap is already injected, leave the hook alone:
-                  # prek's shim reads the live config at run time so it never needs reinstalling,
-                  # and re-running `prek install` over our injected hook would migrate it to
-                  # .legacy (double-run + a dangling reference). Idempotent + quiet.
-                  if [ -n "$hd" ] && ! grep -qs bootstrap-pre-commit "$f"; then
-                    prek install >/dev/null 2>&1 || true
-                    if [ -f "$f" ] && ! grep -qs bootstrap-pre-commit "$f"; then
-                      # inject the bootstrap as a sourced line right after prek's shebang
-                      { head -1 "$f"; echo ". ${./hooks/bootstrap-pre-commit.sh}"; tail -n +2 "$f"; } > "$f.tmp" \
-                        && mv "$f.tmp" "$f" && chmod +x "$f"
-                    fi
-                    guardrails_installed_now=1
+                  # Wire BOTH stages: pre-commit (fast content gates) and pre-push (slower gates
+                  # the local machine runs as CI — e.g. the test suite). prek installs a pre-push
+                  # shim even when the config has no pre-push hooks yet, so the day a repo adds one
+                  # it's already active — no manual `prek install -t pre-push`. The bootstrap is
+                  # stage-agnostic: it only re-enters the devShell to put the toolbelt on PATH, and
+                  # preserves the hook's args + stdin via exec (pre-push needs its ref list on stdin).
+                  if [ -n "$hd" ]; then
+                    for stage in pre-commit pre-push; do
+                      f="$hd/$stage"
+                      # Set up ONCE per stage. If our bootstrap is already injected, leave the hook
+                      # alone: prek's shim reads the live config at run time so it never needs
+                      # reinstalling, and re-running `prek install` over our injected hook would
+                      # migrate it to .legacy (double-run + a dangling reference). Idempotent + quiet.
+                      if ! grep -qs bootstrap-pre-commit "$f"; then
+                        prek install -t "$stage" >/dev/null 2>&1 || true
+                        if [ -f "$f" ] && ! grep -qs bootstrap-pre-commit "$f"; then
+                          # inject the bootstrap as a sourced line right after prek's shebang
+                          { head -1 "$f"; echo ". ${./hooks/bootstrap-pre-commit.sh}"; tail -n +2 "$f"; } > "$f.tmp" \
+                            && mv "$f.tmp" "$f" && chmod +x "$f"
+                        fi
+                        guardrails_installed_now=1
+                      fi
+                    done
                   fi
                 fi
                 # Shared compiler-level cache across every consuming repo AND
@@ -101,7 +111,7 @@
                 export RUSTC_WRAPPER=''${RUSTC_WRAPPER-sccache}
                 export SCCACHE_CACHE_SIZE=''${SCCACHE_CACHE_SIZE:-30G}
                 if [ -n "''${guardrails_installed_now:-}" ]; then
-                  echo "[guardrails] commit hooks installed — commits are now gated on this repo."
+                  echo "[guardrails] commit + push hooks installed — commits and pushes are now gated on this repo."
                 else
                   echo "[guardrails] gates active on this repo."
                 fi
