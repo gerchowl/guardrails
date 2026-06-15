@@ -39,8 +39,8 @@ CONFIG KNOBS (in your repo root):
   perf-history.csv         perf-record: committed per-bench history; the PR diff = the perf report
   deny.toml                cargo-deny: license allow-list + advisory ignores
 
-WIRE THE HOOKS (normally automatic via direnv / nix develop):
-  just install-hooks    or    prek install -t pre-commit -t commit-msg
+WIRE THE HOOKS (normally automatic via direnv / nix develop — both stages):
+  just install-hooks    or    prek install -t pre-commit -t pre-push
 
 MORE: docs/CONVENTIONS.md · github:gerchowl/guardrails
 EOF

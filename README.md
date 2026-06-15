@@ -37,7 +37,7 @@ To actually **gate commits** you also copy in `.pre-commit-config.yaml` (which g
 from `templates/default/`. The input + devShell alone bring the toolbelt onto PATH; the config files
 are what the hook installs.
 
-The devShell brings the toolbelt and auto-runs `prek install` when a `.pre-commit-config.yaml` is present. The installed hook **self-bootstraps the devShell** (direnv, else `nix develop`), so commits from merges, worktrees, or a plain shell still run the gates instead of erroring on a missing toolbelt.
+The devShell brings the toolbelt and auto-installs **both hook stages** when a `.pre-commit-config.yaml` is present — `pre-commit` (fast content gates) and `pre-push` (slower gates the local machine runs as CI, e.g. the test suite). The pre-push shim is wired even if the config has no pre-push hooks yet, so the day you add one it's already active. The installed hooks **self-bootstrap the devShell** (direnv, else `nix develop`), so commits/pushes from merges, worktrees, or a plain shell still run the gates instead of erroring on a missing toolbelt.
 
 ## What's wired (this MVP)
 
