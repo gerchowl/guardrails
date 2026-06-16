@@ -31,6 +31,7 @@
         cli = pkgs.runCommand "guardrails-cli" { } ''
           mkdir -p $out/bin
           install -m755 ${./tools/guardrails.sh} $out/bin/guardrails
+          install -m755 ${./tools/freshness.sh} $out/bin/guardrails-freshness
           patchShebangs $out/bin   # see gates above — sandbox has no /usr/bin/env
         '';
 
