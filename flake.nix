@@ -32,6 +32,8 @@
           mkdir -p $out/bin
           install -m755 ${./tools/guardrails.sh} $out/bin/guardrails
           install -m755 ${./tools/freshness.sh} $out/bin/guardrails-freshness
+          install -m755 ${./tools/freshness-refresh.sh} $out/bin/guardrails-freshness-refresh
+          install -m755 ${./tools/freshness-nudge.sh} $out/bin/guardrails-freshness-nudge
           patchShebangs $out/bin   # see gates above — sandbox has no /usr/bin/env
         '';
 
@@ -100,8 +102,22 @@
                         fi
                         guardrails_installed_now=1
                       fi
+                      # pre-push only: a once/week freshness nudge. prek's hook ends in `exec`, so
+                      # anything appended never runs — inject it as line 3 (after shebang + the
+                      # bootstrap, so the toolbelt is on PATH), before that exec. It reads only the
+                      # cache, never stdin (pre-push's ref list must reach prek), and always exits 0.
+                      if [ "$stage" = pre-push ] && [ -f "$f" ] && ! grep -qs guardrails-freshness-nudge "$f"; then
+                        { head -2 "$f"; echo "command -v guardrails-freshness-nudge >/dev/null 2>&1 && guardrails-freshness-nudge || true"; tail -n +3 "$f"; } > "$f.tmp" \
+                          && mv "$f.tmp" "$f" && chmod +x "$f"
+                      fi
                     done
                   fi
+                fi
+                # Keep the freshness cache warm OFF the hot path: throttled (≤1/day) + detached, so
+                # the shell is never blocked and never hits the network inline. The pre-push nudge
+                # above reads the cache this writes. (`( … & )` fully detaches from job control.)
+                if command -v guardrails-freshness-refresh >/dev/null 2>&1; then
+                  ( guardrails-freshness-refresh >/dev/null 2>&1 & ) 2>/dev/null || true
                 fi
                 # Shared compiler-level cache across every consuming repo AND
                 # worktree: each keeps its own target/ (parallel builds stay
