@@ -35,10 +35,11 @@ if not stale:
     sys.exit(0)
 
 def tag(r):
+    name = r.get("input", "?")
     if r.get("behind") is True:
-        return f"{r['input']}←upstream"
+        return f"{name}←upstream"
     a = r.get("age_days")
-    return f"{r['input']} {a}d" if a is not None else r["input"]
+    return f"{name} {a}d" if a is not None else name
 
 shown = ", ".join(tag(r) for r in stale[:4]) + (" …" if len(stale) > 4 else "")
 print(f"⟳ pins drifting: {shown}  — `guardrails freshness` when ready")

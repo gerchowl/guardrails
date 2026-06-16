@@ -14,7 +14,7 @@ top="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ -f "$top/flake.lock" ] || exit 0
 
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/guardrails"
-key="$(printf '%s' "$top" | tr -c 'A-Za-z0-9.' '_')" # repo path → stable, collision-free filename
+key="$(printf '%s' "$top" | tr -c 'A-Za-z0-9.' '_')" # repo path → stable, path-sanitized filename
 stamp="$cache/$key.stamp"
 ttl_min="${GUARDRAILS_FRESHNESS_TTL_MIN:-1440}"
 
@@ -24,11 +24,20 @@ if [ -f "$stamp" ] && [ -z "$(find "$stamp" -mmin "+$ttl_min" 2>/dev/null)" ]; t
 fi
 
 mkdir -p "$cache" 2>/dev/null || exit 0
+# Single-refresher lock (atomic mkdir): several devShell entries can fire at TTL expiry, but only
+# one may run `git ls-remote` — the losers just exit rather than storm the network. Break a stale
+# lock left by a killed refresher (>10min) so freshness can't wedge forever.
+lock="$cache/$key.lock"
+[ -d "$lock" ] && [ -n "$(find "$lock" -mmin +10 2>/dev/null)" ] && rmdir "$lock" 2>/dev/null
+mkdir "$lock" 2>/dev/null || exit 0
+trap 'rmdir "$lock" 2>/dev/null || true' EXIT
+
 out="$cache/$key.json"
+tmp="$(mktemp "$cache/$key.XXXXXX" 2>/dev/null)" || exit 0 # per-run temp: no shared-tmp clobber
 # --online so the nudge can show "upstream moved"; the 8s/input bound lives in guardrails-freshness.
-if (cd "$top" && guardrails-freshness --online --json) >"$out.tmp" 2>/dev/null; then
-  mv -f "$out.tmp" "$out" && touch "$stamp"
+if (cd "$top" && guardrails-freshness --online --json) >"$tmp" 2>/dev/null; then
+  mv -f "$tmp" "$out" && touch "$stamp"
 else
-  rm -f "$out.tmp"
+  rm -f "$tmp"
 fi
 exit 0
