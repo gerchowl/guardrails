@@ -4,6 +4,7 @@
 set -uo pipefail
 case "${1:-info}" in
   info | "" | -h | --help | help) ;;
+  freshness) shift; exec guardrails-freshness "$@" ;;
   *) echo "guardrails: unknown command '$1' (try: guardrails info)" >&2 ;;
 esac
 cat <<'EOF'
@@ -41,6 +42,11 @@ CONFIG KNOBS (in your repo root):
 
 WIRE THE HOOKS (normally automatic via direnv / nix develop — both stages):
   just install-hooks    or    prek install -t pre-commit -t pre-push
+
+FLAKE FRESHNESS (off the hot path — on demand, not on `cd`):
+  guardrails freshness            this flake's inputs by lock age (offline)
+  guardrails freshness --online   also flag inputs whose upstream ref moved
+  guardrails freshness --json     machine output (fleet dashboard / push-time nudge)
 
 MORE: docs/CONVENTIONS.md · github:gerchowl/guardrails
 EOF
