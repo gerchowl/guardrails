@@ -41,11 +41,17 @@ fi
 # nix flake metadata gives each input's locked {rev,lastModified,type,owner/repo/ref}.
 meta="$(nix --extra-experimental-features 'nix-command flakes' flake metadata "$root" --json 2>/dev/null)"
 if [ -z "$meta" ]; then
-  echo "guardrails freshness: nix flake metadata failed (offline?)" >&2
+  # Degrade silently (offline / nix missing). Keep --json TOTAL: the cache + post-push nudge
+  # parse our stdout, so always emit valid JSON in --json mode — never empty.
+  if [ "$as_json" = 1 ]; then echo '{"inputs":[],"note":"metadata unavailable (offline?)"}'; else echo "guardrails freshness: nix flake metadata failed (offline?)" >&2; fi
   exit 0
 fi
 
-tmp="$(mktemp)"
+tmp="$(mktemp 2>/dev/null)" || tmp=""
+if [ -z "$tmp" ]; then
+  if [ "$as_json" = 1 ]; then echo '{"inputs":[],"note":"mktemp unavailable"}'; else echo "guardrails freshness: mktemp failed" >&2; fi
+  exit 0
+fi
 printf '%s' "$meta" >"$tmp"
 trap 'rm -f "$tmp"' EXIT
 
@@ -63,8 +69,11 @@ as_json = os.environ["GR_JSON"] == "1"
 stale_days = int(os.environ["GR_STALE"])
 
 
-def remote_moved(locked):
-    """True/False if the locked ref's upstream tip differs; None if unknown/uncheckable."""
+def remote_moved(locked, original):
+    """True/False if the locked ref's upstream tip differs; None if unknown/uncheckable.
+    Best-effort + advisory: branch-tracked inputs often record ref=None, so we fall back to the
+    input's `original` ref, then HEAD (default branch) — which can over-report. Treat the
+    resulting `behind` as a hint, not an authority."""
     t = locked.get("type")
     if t == "github":
         url = f"https://github.com/{locked.get('owner')}/{locked.get('repo')}.git"
@@ -74,7 +83,7 @@ def remote_moved(locked):
         return None
     if not url:
         return None
-    ref = locked.get("ref") or "HEAD"
+    ref = locked.get("ref") or original.get("ref") or "HEAD"
     try:
         out = subprocess.run(["git", "ls-remote", url, ref],
                              capture_output=True, text=True, timeout=8)
@@ -87,10 +96,11 @@ def remote_moved(locked):
 rows = []
 for name, ref in direct.items():
     key = ref[0] if isinstance(ref, list) else ref          # follows → [node, ...]
-    locked = nodes.get(key, {}).get("locked", {})
+    node = nodes.get(key, {})
+    locked = node.get("locked", {})
     lm = locked.get("lastModified")
     age = int((now - lm) // 86400) if lm else None
-    behind = remote_moved(locked) if online else None
+    behind = remote_moved(locked, node.get("original", {})) if online else None
     stale = (age is not None and age >= stale_days) or behind is True
     rows.append({"input": name, "age_days": age, "rev": locked.get("rev", "")[:9],
                  "behind": behind, "stale": stale})
