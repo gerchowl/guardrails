@@ -22,5 +22,12 @@
           # env  = { SOME_VAR = "value"; };
           # hook = ''echo "myproject dev shell"'';
         };
+
+        # CI = a shim over `nix flake check` (see docs/CONVENTIONS.md). Put the
+        # reproducible checks HERE so they run identically locally and in CI —
+        # the workflow (templates/default/ci.yml) only invokes `nix flake check`.
+        # Starts with "the dev shell builds"; add real checks (cargo test, build,
+        # frontend build, …). Host-bound jobs (e2e/platform) stay out — own workflow.
+        checks.default = self.devShells.${system}.default;
       });
 }

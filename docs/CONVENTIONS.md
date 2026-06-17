@@ -20,6 +20,7 @@ rest, run deep checks async.* This doc is the contract; `flake.nix` ships the to
 | duplication detector | reinvention vs reuse | **NUDGE** |
 | diff blast-radius | scope creep / drive-by edits | **NUDGE** |
 | cargo-mutants | test theater (do tests catch bugs?) | **CI-deep** |
+| ci-shim (workflow runs logic w/o `nix flake check`) | CI logic that can't run locally; YAML re-derives the build | **NUDGE** (promotable) |
 | perf baselines + budgets | silent perf regressions | **CI-deep + GATE on hard** |
 
 **Rule for adding a check:** it must catch a real *defect class* with a low enough false-positive
@@ -99,3 +100,44 @@ forever unattributable.
 - **honest measurement:** measure GPU/CPU time *uncapped* (not vsync-capped fps); use
   ratio/statistical comparison on noisy hardware; flag software-vs-real-GPU and harness caps. Wrong
   methodology bakes in confidently-wrong baselines — worse than none.
+
+## CI = a shim over a local-runnable check
+
+**The logic lives in `nix flake check`; the workflow only triggers it.** One definition runs
+identically on a dev's machine and in CI — there is no "passes locally / fails in CI" drift because
+it is the *same* command. The `.github/workflows/*.yml` is a shim: checkout → install nix →
+`nix flake check -L`. No project logic in YAML; nothing to reproduce by hand.
+
+```yaml
+# the entire CI job — see templates/default/ci.yml
+runs-on: ubuntu-latest            # the ONLY public/private difference (see below)
+steps:
+  - uses: actions/checkout@v4
+  - uses: DeterminateSystems/nix-installer-action@main
+  - run: nix flake check -L
+```
+
+**The runner is interchangeable.** Because the shim carries no logic, the only thing that differs
+between repos is the one `runs-on:` line:
+
+| Origin | `runs-on` | Why |
+|---|---|---|
+| **public** repo | `ubuntu-latest` / `macos-latest` (GitHub-hosted) | a public repo accepts PRs from anyone — running that on your own hardware is arbitrary code execution. **Never.** |
+| **private** repo | `[self-hosted, <label>]` (e.g. anvil/sage) | trusted collaborators only; org-scoped runners cover every private repo in the org |
+
+So "GitHub-hosted vs self-hosted vs mirror" stops being an architecture question and collapses to a
+label. **Self-hosted runners are private-repos-only** — enforced by the runner group's
+`allows_public_repositories = false`. They are **outbound-only** (long-poll *out* to the forge; no
+inbound endpoint, no ingress, registration token short-lived + uncommitted). Mirroring a public repo
+into a private one to "borrow" self-hosted runners is a **backdoor** that launders untrusted code
+onto your hardware — don't.
+
+**What stays OUT of the shim.** `nix flake check` is for the deterministic, hermetic core
+(build, lint, fmt, unit/integration tests, generated-doc checks). Host-bound / non-deterministic
+jobs — browser e2e, platform bundling (macOS/Windows), GPU/perf harnesses — are *not* flake-check
+material; they live as their own explicit (usually GitHub-hosted) jobs. Don't force them into the
+shim, and don't let them become the excuse to put *all* logic back in YAML.
+
+**Rule:** if a check is reproducible, it goes in `flake.nix → checks` (run-local + CI, one
+definition); the workflow only ever *invokes* it. A consumer's `flake.nix` therefore must define
+`checks`; `templates/default/` ships the `ci.yml` shim + a `checks` stub to copy.
