@@ -227,6 +227,37 @@ dd_assert "derived-docs passes after multi-region fix"    0 "$tmp/dd-multi.md"
 printf '%s\n' 'plain prose with no markers at all' > "$tmp/dd-none.md"
 dd_assert "derived-docs ignores files without markers" 0 "$tmp/dd-none.md"
 
+# --- ci-shim gate ------------------------------------------------------------
+ci_gate="$here/ci-shim.sh"
+mkdir -p "$tmp/.github/workflows"
+# a shim (invokes a nix check) → clean (no output, exit 0)
+printf 'jobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: nix flake check -L\n' \
+  > "$tmp/.github/workflows/shim.yml"
+out="$("$ci_gate" "$tmp/.github/workflows/shim.yml" 2>&1)"
+[ -z "$out" ] && echo "ci-shim ok    — shim workflow passes clean" \
+  || { echo "ci-shim FAIL  — shim flagged: $out"; fails=$((fails + 1)); }
+# logic, no nix check → nudged (names the file), but exit 0 by default
+printf 'jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo build --release\n' \
+  > "$tmp/.github/workflows/logic.yml"
+out="$("$ci_gate" "$tmp/.github/workflows/logic.yml" 2>&1)"
+printf '%s' "$out" | grep -q 'logic.yml' && echo "ci-shim ok    — logic-only workflow nudged" \
+  || { echo "ci-shim FAIL  — logic-only not nudged"; fails=$((fails + 1)); }
+"$ci_gate" "$tmp/.github/workflows/logic.yml" >/dev/null 2>&1 \
+  && echo "ci-shim ok    — nudge exits 0 by default" \
+  || { echo "ci-shim FAIL  — default nudge should exit 0"; fails=$((fails + 1)); }
+# guardrails-ok in the file → allowlisted
+printf '# guardrails-ok: host-bound e2e\njobs:\n  e2e:\n    steps:\n      - run: npx playwright test\n' \
+  > "$tmp/.github/workflows/e2e.yml"
+out="$("$ci_gate" "$tmp/.github/workflows/e2e.yml" 2>&1)"
+[ -z "$out" ] && echo "ci-shim ok    — guardrails-ok allowlists the workflow" \
+  || { echo "ci-shim FAIL  — allowlist ignored: $out"; fails=$((fails + 1)); }
+# enforce mode → hard fail (exit 1) on a logic-only workflow
+if GUARDRAILS_CI_SHIM_ENFORCE=1 "$ci_gate" "$tmp/.github/workflows/logic.yml" >/dev/null 2>&1; then
+  echo "ci-shim FAIL  — enforce mode should exit 1"; fails=$((fails + 1))
+else
+  echo "ci-shim ok    — enforce mode exits 1"
+fi
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2
