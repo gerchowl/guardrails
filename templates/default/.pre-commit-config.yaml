@@ -29,6 +29,12 @@ repos:
         entry: guardrails-no-conflict-markers
         language: system
         pass_filenames: true
+      - id: ci-shim
+        name: CI is a shim over `nix flake check` (nudge)
+        entry: guardrails-ci-shim
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: true
       - id: gitleaks
         name: secrets scan
         entry: gitleaks protect --staged --redact -v

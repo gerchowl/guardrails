@@ -1,0 +1,25 @@
+# CI shim — the logic lives in `nix flake check` (run the SAME command locally).
+# This workflow only triggers it; there is no project logic in YAML. See
+# docs/CONVENTIONS.md "CI = a shim over a local-runnable check".
+#
+# Copy to .github/workflows/ci.yml. Host-bound jobs (browser e2e, macOS/Windows
+# bundling, GPU/perf) are NOT nix-check material — give them their own workflow
+# and annotate it `guardrails-ok` (the ci-shim gate's allowlist).
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  check:
+    # The ONLY public/private difference is this label:
+    #   public repo  → ubuntu-latest / macos-latest (GitHub-hosted)
+    #   private repo → [self-hosted, <label>]  (e.g. [self-hosted, anvil])
+    # Self-hosted runners are PRIVATE-repos-only — never run untrusted public
+    # PRs on your own hardware (the runner group enforces allows_public_repositories=false).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - run: nix flake check -L
