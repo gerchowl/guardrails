@@ -56,6 +56,12 @@ Level contract (the one rule agents break: **frequency dictates level**):
 A `tracing` *layer* writing structured JSONL locally **is** the audit trail and the agentic-pane's
 "full traces" — same mechanism, capability-gated.
 
+Because that JSONL **is** the audit surface, every logged field must be *deliberately shaped*: never
+`info!(?value)` / `warn!(%value)` (raw `Debug`/`Display` of a whole value — the reflexive way PII or
+secrets leak in). Confine raw `?`/`%` formatting to the one schema/redaction file where fields are
+defined and paths are redacted; the `no-raw-trace-fields` **GATE** enforces the boundary
+(allowlist that file via `GUARDRAILS_TRACE_ALLOW_GLOBS`).
+
 ## Compile targets — leaner end-product (THE three-tier split)
 
 Yes, gate by build profile — but only **Tier 1** is compiled out. Conflating these is the mistake:

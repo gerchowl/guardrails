@@ -17,6 +17,8 @@ GATES — block a commit unless escaped:
   no-commented-code   commented-out code graveyards
   no-hardcoded        magic values that should be tunables (src/ only)
   no-conflict-markers committed <<<<<<</=======/>>>>>>> merge-marker lines (no escape — never legitimate)
+  no-raw-trace-fields raw ?/% Debug/Display field formatters in tracing! macros — shape the field
+                      in your schema surface (PII/secrets leak into logs by reflex otherwise)
   derived-docs        regions marked `<!-- guardrails:derived cmd="…" -->` must match `cmd`'s output
                       (re-run with --fix to regenerate; commands run with repo-hook trust)
   + gitleaks · rustfmt · clippy -D warnings · cargo-deny
@@ -33,6 +35,8 @@ CONFIG KNOBS (in your repo root):
   .pre-commit-config.yaml  which gates run + their entries
   GUARDRAILS_OUTPUT_GLOBS  no-debug-leftovers: colon-sep path globs for legit CLI output surfaces,
                            e.g.  entry: env GUARDRAILS_OUTPUT_GLOBS=*/cli/*:scripts/* guardrails-no-debug-leftovers
+  GUARDRAILS_TRACE_ALLOW_GLOBS  no-raw-trace-fields: colon-sep path globs for the schema/redaction
+                           surface where raw ?/% field formatting is defined, e.g. src/trace_schema.rs
   guardrails-allow.txt     no-hardcoded: blessed path prefixes to skip
   GUARDRAILS_ENV_PREFIXES  no-hardcoded: colon-sep env-var name prefixes to flag as bare string
                            literals (write the shared const instead), e.g. "MYAPP_:OTHER_"

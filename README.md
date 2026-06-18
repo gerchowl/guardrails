@@ -44,6 +44,11 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
 - **Gates** (`gates/*.sh`, on PATH as `guardrails-<name>`, run by `prek`):
   - `no-fake-impl` — `todo!`/`unimplemented!`/`FIXME`/`placeholder impl` (deceptive "done"). **GATE**
   - `no-debug-leftovers` — `dbg!`/`print!`/`println!`/`eprint!`/`eprintln!`/`console.log` outside main/bin/tests. **GATE** (CLI output surfaces: set `GUARDRAILS_OUTPUT_GLOBS="*/cli/*:..."` to allow them.)
+  - `no-raw-trace-fields` — raw `?`/`%` Debug/Display **field** formatters inside `tracing` macros
+    (`info!(user = ?user)`, `debug!(%peer)`) — they splat an arbitrary value into the audit trail,
+    the reflexive way PII/secrets leak. Confine raw formatting to the schema/redaction surface where
+    fields are *defined*: `GUARDRAILS_TRACE_ALLOW_GLOBS="src/trace_schema.rs:..."`. String/char
+    literals are blanked first, so regex patterns like `r"(?i)…"` are never mistaken for it. **GATE**
   - `no-commented-code` — commented-out code graveyards. **GATE**
   - `no-hardcoded` — magic values that should be tunables (`src/` only; bless prefixes in
     `guardrails-allow.txt`; token-level floats, underscored ints, `/Users//home//tmp` paths checked
