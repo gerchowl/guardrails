@@ -258,6 +258,41 @@ else
   echo "ci-shim ok    — enforce mode exits 1"
 fi
 
+# --- no-raw-trace-fields: ?/% Debug/Display field formatters in tracing macros ------
+trace_gate="$here/no-raw-trace-fields.sh"
+trace_assert() { # desc, want-exit, env(or --), file-content
+  local desc="$1" want="$2"; shift 2
+  local env=()
+  while [ "$1" != "--" ]; do env+=("$1"); shift; done
+  shift
+  printf '%s\n' "$1" > "$tmp/src/trace.rs"
+  env "${env[@]}" "$trace_gate" "$tmp/src/trace.rs" >/dev/null 2>&1
+  if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
+}
+trace_assert "info!(name = ?val) is flagged"             1 -- 'fn f() { info!(user = ?user); }'
+trace_assert "debug!(%val) shorthand is flagged"         1 -- 'fn f() { debug!(%peer); }'
+trace_assert "error!(?val, msg) shorthand is flagged"    1 -- 'fn f() { error!(?e, "boom"); }'
+trace_assert "tracing::warn!(x = ?y) qualified flagged"  1 -- 'fn f() { tracing::warn!(req = ?req); }'
+trace_assert "multi-line field formatter is flagged"     1 -- 'fn f() {
+    info!(
+        user = ?user,
+    );
+}'
+trace_assert "modulo a % b is not a formatter"           0 -- 'fn f() -> u32 { a % 4 }'
+trace_assert "try operator foo()? is not a formatter"    0 -- 'fn f() { let x = foo()?; }'
+trace_assert "match arm => is not a field assignment"    0 -- 'fn f() { match e { _ => err() } }'
+trace_assert "plain message string passes"               0 -- 'fn f() { info!("done {}", n); }'
+trace_assert "regex inline flags r\"(?i)\" not flagged"  0 -- 'fn f() { Regex::new(r"(?i)x(?:y)(?P<n>z)"); }'
+trace_assert "percent inside a message string passes"    0 -- 'fn f() { info!(pct = p, "{}% done", p); }'
+trace_assert "guardrails-ok suppresses"                  0 -- 'fn f() { info!(?e); } // guardrails-ok'
+trace_assert "allowlisted schema surface is skipped"     0 \
+  "GUARDRAILS_TRACE_ALLOW_GLOBS=*/src/trace.rs" -- 'fn f() { info!(user = ?user); }'
+# tests/ path is exempt even for a real formatter (relative path, as pre-commit passes it)
+printf 'fn f() { info!(user = ?user); }\n' > "$tmp/tests/trace_leak.rs"
+( cd "$tmp" && "$trace_gate" tests/trace_leak.rs >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — no-raw-trace-fields excludes top-level tests/ (relative)"
+else echo "FAIL  — no-raw-trace-fields flags top-level tests/ (relative)"; fails=$((fails + 1)); fi
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2
