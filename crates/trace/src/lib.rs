@@ -32,7 +32,7 @@ fn env_filter() -> EnvFilter {
 pub fn init() {
     let _ = tracing_subscriber::registry()
         .with(env_filter())
-        .with(fmt::layer().with_target(false))
+        .with(fmt::layer().with_target(false).with_writer(std::io::stderr))
         .try_init();
 }
 
@@ -50,7 +50,7 @@ pub fn init_jsonl(path: impl AsRef<Path>) -> Option<tracing_appender::non_blocki
     let (writer, guard) = tracing_appender::non_blocking(tracing_appender::rolling::never(dir, file));
     let _ = tracing_subscriber::registry()
         .with(env_filter())
-        .with(fmt::layer().with_target(false))
+        .with(fmt::layer().with_target(false).with_writer(std::io::stderr))
         .with(fmt::layer().json().with_writer(writer))
         .try_init();
     Some(guard)
