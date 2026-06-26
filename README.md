@@ -85,7 +85,9 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
 - **`templates.default`**: a consumer flake + config.
 - **Conventions** (`docs/CONVENTIONS.md`): the gate/nudge/CI matrix, the tracing spine (logging
   levels + audit + perf + the agentic-pane trace), the **compile-target 3-tier split** for a lean
-  end-product, and perf baselines/budgets/methodology.
+  end-product, perf baselines/budgets/methodology, **docs-as-tests** (the how-to *is* the test
+  suite — doctests/trycmd/`mdbook test` wired as flake checks, can't-drift), and **ADR lifecycle
+  hygiene** (Proposed-until-validated; reconcile supersession seams before flipping to Accepted).
 - **Tunables registry** (`crates/tunables/`): `const_tunable!` / `config!` macros that declare a
   value at its definition site and auto-register it into one generated, scannable `TUNABLES.md`
   (co-located + auditable + can't drift — the decorator→registry that retires hand-maintained
