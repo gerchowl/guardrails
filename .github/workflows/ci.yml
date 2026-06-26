@@ -17,7 +17,7 @@ jobs:
 
       # Gate semantics: red-green fixtures (catch/allow) so the detectors can't silently regress.
       - name: gate tests
-        run: ./gates/test-gates.sh
+        run: ./gates/test-gates.sh && ./gates/test-adr-matrix.sh
 
       # Tunables crate: tests + the registry must be regenerated and committed (can't drift).
       - name: tunables tests

@@ -64,6 +64,11 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
     region. Mismatch → blocks with a unified diff. Re-run with `--fix` to regenerate in place.
     Security: marker commands run with the same trust as any pre-commit hook in the repo — review
     them like you review `.pre-commit-config.yaml`. **GATE**
+  - `adr-matrix` — every **Accepted** ADR is cited in the project's feature/status matrix. Keys on ADR
+    *status* (per the `docs/adr/README.md` index), not edits, so a hand-maintained `FEATURE-MATRIX.md`
+    can't silently drift behind decided designs while Proposed ADRs (roadmap) and typo fixes stay quiet.
+    `guardrails-adr-matrix [<adr-index>] [<matrix>]` (auto-discovers both); exempt non-feature decision
+    ADRs via `guardrails-adr-exempt.txt` / `$ADR_MATRIX_EXEMPT`. **GATE**
   - `perf-budget` — gate criterion regressions against a checked-in `perf-budgets.toml`. **GATE/NUDGE**
     (CI-deep, not pre-commit: run after `cargo criterion`; gate big regressions, nudge the rest.)
   - `perf-record` — append per-bench medians to a committed `perf-history.csv`. The **PR diff is the
