@@ -293,6 +293,159 @@ printf 'fn f() { info!(user = ?user); }\n' > "$tmp/tests/trace_leak.rs"
 if [ $? = 0 ]; then echo "ok    — no-raw-trace-fields excludes top-level tests/ (relative)"
 else echo "FAIL  — no-raw-trace-fields flags top-level tests/ (relative)"; fails=$((fails + 1)); fi
 
+# --- numerical-obligation: ratcheting baselines vs measurement JSON --------------
+# Verifies: regression gated, improvement ratchets the baseline on --update (never widens
+# slack), tolerance honored, higher-is-better direction works, missing measurement is a
+# soft-skip, nudge mode warns but passes, ratchet=false freezes baseline as a fixed budget.
+numob_gate="$here/numerical-obligation.sh"
+ndir="$tmp/numob"
+mkdir -p "$ndir"
+
+numob_assert() { # desc, want-exit, args...
+  local desc="$1" want="$2"; shift 2
+  "$numob_gate" "$@" >/dev/null 2>&1
+  local got=$?
+  if [ "$got" = "$want" ]; then echo "ok    — $desc"
+  else echo "FAIL  — $desc (want $want, got $got)"; fails=$((fails + 1)); fi
+}
+
+# (1) Lower-is-better: regression beyond zero tolerance is gated.
+printf '{"adapters":{"foo":{"hard":10}}}\n' > "$ndir/base.json"
+printf '{"adapters":{"foo":{"hard":11}}}\n' > "$ndir/meas.json"
+cat > "$ndir/regress.toml" <<EOF
+[set."t"]
+baseline = "$ndir/base.json"
+measurement = "$ndir/meas.json"
+EOF
+numob_assert "regression beyond tolerance is gated" 1 "$ndir/regress.toml"
+
+# (2) Same regression, nudge mode: warns but exit 0.
+cat > "$ndir/nudge.toml" <<EOF
+default_mode = "nudge"
+[set."t"]
+baseline = "$ndir/base.json"
+measurement = "$ndir/meas.json"
+EOF
+numob_assert "regression in nudge mode warns but passes" 0 "$ndir/nudge.toml"
+
+# (3) Within tolerance: 11 vs 10 with 20% tolerance allows up to 12.
+cat > "$ndir/within.toml" <<EOF
+default_tolerance = 0.20
+[set."t"]
+baseline = "$ndir/base.json"
+measurement = "$ndir/meas.json"
+EOF
+numob_assert "within tolerance passes" 0 "$ndir/within.toml"
+
+# (4) Improvement: 10 → 9 under default direction (lower). Check passes; --update ratchets.
+printf '{"adapters":{"foo":{"hard":10}}}\n' > "$ndir/base.json"
+printf '{"adapters":{"foo":{"hard":9}}}\n'  > "$ndir/meas.json"
+cat > "$ndir/improve.toml" <<EOF
+[set."t"]
+baseline = "$ndir/base.json"
+measurement = "$ndir/meas.json"
+EOF
+numob_assert "improvement passes check" 0 "$ndir/improve.toml"
+"$numob_gate" --update "$ndir/improve.toml" >/dev/null 2>&1
+new_val=$(python3 -c 'import json; print(json.load(open("'"$ndir"'/base.json"))["adapters"]["foo"]["hard"])')
+if [ "$new_val" = "9" ]; then echo "ok    — --update ratchets baseline DOWN to improvement"
+else echo "FAIL  — --update did not ratchet (baseline=$new_val, expected 9)"; fails=$((fails + 1)); fi
+
+# (5) After --update, a fresh measurement at the old level is now a regression.
+printf '{"adapters":{"foo":{"hard":10}}}\n' > "$ndir/meas.json"
+numob_assert "regression vs newly-ratcheted baseline is gated" 1 "$ndir/improve.toml"
+
+# (6) --update on a regression does NOT widen the baseline (ratchet, not budget).
+printf '{"adapters":{"foo":{"hard":9}}}\n'  > "$ndir/base.json"
+printf '{"adapters":{"foo":{"hard":20}}}\n' > "$ndir/meas.json"
+"$numob_gate" --update "$ndir/improve.toml" >/dev/null 2>&1
+val=$(python3 -c 'import json; print(json.load(open("'"$ndir"'/base.json"))["adapters"]["foo"]["hard"])')
+if [ "$val" = "9" ]; then echo "ok    — --update REFUSES to widen on regression"
+else echo "FAIL  — --update widened baseline 9 → $val"; fails=$((fails + 1)); fi
+
+# (7) Higher-is-better: throughput floor with tolerance.
+printf '{"throughput":1000}\n' > "$ndir/base.json"
+printf '{"throughput":850}\n'  > "$ndir/meas.json"
+cat > "$ndir/higher-bad.toml" <<EOF
+default_direction = "higher"
+default_tolerance = 0.10
+[set."t"]
+baseline = "$ndir/base.json"
+measurement = "$ndir/meas.json"
+EOF
+numob_assert "higher-direction floor gated when below" 1 "$ndir/higher-bad.toml"
+printf '{"throughput":950}\n' > "$ndir/meas.json"
+numob_assert "higher-direction within tolerance passes" 0 "$ndir/higher-bad.toml"
+
+# (8) Higher-is-better improvement also ratchets UP on --update.
+printf '{"throughput":1500}\n' > "$ndir/meas.json"
+"$numob_gate" --update "$ndir/higher-bad.toml" >/dev/null 2>&1
+val=$(python3 -c 'import json; print(json.load(open("'"$ndir"'/base.json"))["throughput"])')
+if [ "$val" = "1500" ]; then echo "ok    — --update ratchets higher-direction baseline UP"
+else echo "FAIL  — higher-direction --update did not ratchet (baseline=$val)"; fails=$((fails + 1)); fi
+
+# (9) Missing measurement: soft-skip (warn, exit 0).
+printf '{"a":1}\n' > "$ndir/base.json"
+rm -f "$ndir/meas.json"
+cat > "$ndir/missing-meas.toml" <<EOF
+[set."t"]
+baseline = "$ndir/base.json"
+measurement = "$ndir/missing.json"
+EOF
+numob_assert "missing measurement file is a soft-skip" 0 "$ndir/missing-meas.toml"
+
+# (10) Missing baseline: hard error.
+cat > "$ndir/missing-base.toml" <<EOF
+[set."t"]
+baseline = "$ndir/no-such.json"
+measurement = "$ndir/base.json"
+EOF
+numob_assert "missing baseline file is a hard error" 1 "$ndir/missing-base.toml"
+
+# (11) Missing config file: soft-skip (opt-in by file presence, matches perf-budget UX).
+numob_assert "missing config is a soft-skip" 0 "$ndir/no-such-config.toml"
+
+# (12) ratchet=false: --update does NOT modify even on improvement (it's a fixed budget).
+printf '{"a":10}\n' > "$ndir/base.json"
+printf '{"a":5}\n'  > "$ndir/meas.json"
+cat > "$ndir/fixed.toml" <<EOF
+[set."t"]
+baseline = "$ndir/base.json"
+measurement = "$ndir/meas.json"
+ratchet = false
+EOF
+"$numob_gate" --update "$ndir/fixed.toml" >/dev/null 2>&1
+val=$(python3 -c 'import json; print(json.load(open("'"$ndir"'/base.json"))["a"])')
+if [ "$val" = "10" ]; then echo "ok    — ratchet=false treats baseline as a fixed budget"
+else echo "FAIL  — ratchet=false was ratcheted (baseline=$val, expected 10)"; fails=$((fails + 1)); fi
+
+# (13) Nested + multi-key: every numeric leaf is independently gated.
+printf '{"col":{"A":{"x":1.0,"y":2.0},"B":{"x":3.0}}}\n' > "$ndir/base.json"
+printf '{"col":{"A":{"x":1.1,"y":1.9},"B":{"x":3.5}}}\n' > "$ndir/meas.json"
+cat > "$ndir/nested.toml" <<EOF
+[set."t"]
+baseline = "$ndir/base.json"
+measurement = "$ndir/meas.json"
+EOF
+"$numob_gate" "$ndir/nested.toml" >/dev/null 2>&1
+if [ $? = 1 ]; then echo "ok    — nested leaves are independently gated"
+else echo "FAIL  — nested gating wrong"; fails=$((fails + 1)); fi
+
+# (14) ${ENV:-default} expansion in measurement paths.
+printf '{"a":1}\n' > "$ndir/base.json"
+printf '{"a":1}\n' > "$ndir/env-meas.json"
+cat > "$ndir/env.toml" <<EOF
+[set."t"]
+baseline = "$ndir/base.json"
+measurement = "\${NUMOB_TEST_MEAS:-$ndir/env-meas.json}"
+EOF
+NUMOB_TEST_MEAS="$ndir/env-meas.json" "$numob_gate" "$ndir/env.toml" >/dev/null 2>&1
+if [ $? = 0 ]; then echo "ok    — \${ENV:-default} expansion in measurement path"
+else echo "FAIL  — env expansion broken"; fails=$((fails + 1)); fi
+
+# (15) --list mode is informational, exit 0.
+numob_assert "--list mode is informational" 0 --list "$ndir/improve.toml"
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2
