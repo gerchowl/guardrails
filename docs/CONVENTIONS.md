@@ -22,6 +22,7 @@ rest, run deep checks async.* This doc is the contract; `flake.nix` ships the to
 | cargo-mutants | test theater (do tests catch bugs?) | **CI-deep** |
 | ci-shim (workflow runs logic w/o `nix flake check`) | CI logic that can't run locally; YAML re-derives the build | **NUDGE** (promotable) |
 | perf baselines + budgets | silent perf regressions | **CI-deep + GATE on hard** |
+| numerical-obligation ratchet | silent quality regressions on numerical contracts (parity error, coverage %, HARD counts, binary size) — distinct from perf because the *baseline moves on improvement* | **CI-deep + GATE** |
 
 **Rule for adding a check:** it must catch a real *defect class* with a low enough false-positive
 rate that nobody reflexively bypasses it. A noisy gate trains `--no-verify` and is worse than none.

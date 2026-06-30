@@ -58,3 +58,12 @@ repos:
         language: system
         files: Cargo\.(toml|lock)$
         pass_filenames: false
+      # Numerical-obligation ratchet — wire as a pre-PUSH hook (CI-deep, not pre-commit):
+      # the measurer runs separately and writes the measurement JSON files. Uncomment + add a
+      # `numerical-obligation.toml` to enable. See templates/default/numerical-obligation.toml.
+      # - id: numerical-obligation
+      #   name: numerical obligations (parity errors / HARD counts / coverage % / ...)
+      #   entry: guardrails-numerical-obligation
+      #   language: system
+      #   stages: [pre-push]
+      #   pass_filenames: false

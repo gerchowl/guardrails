@@ -1,0 +1,31 @@
+# guardrails numerical-obligation — ratchet any measured numerical quality contract.
+#
+# Workflow: your measurer (test, bench, parity script, audit) writes a JSON of measured
+# values; this gate diffs it against a checked-in baseline JSON of the same shape and
+# fails on regression. `--update` ratchets the baseline IN THE IMPROVEMENT DIRECTION only
+# — it refuses to widen slack on regression (the ratchet, not the budget).
+#
+# Distinct from perf-budget:
+#   * baseline is the *high-water mark*, not a fixed ceiling
+#   * default tolerance is 0 (strict; raise per set if measurement is noisy)
+#   * `--update` is part of the gate, used after every intentional improvement
+#
+# default_direction = "lower"     # lower-is-better (parity error, HARD count, binary size, …)
+# default_tolerance = 0.0         # fractional headroom before regression fires
+# default_mode      = "gate"      # gate | nudge
+#
+# [set."audit-hard-counts"]
+# baseline    = "tools/parity/audit-baseline.json"          # canonical, version-controlled
+# measurement = "${AUDIT_MEAS:-tmp/audit-current.json}"     # transient, written by your measurer
+# # ratchet = true                                          # default true (--update writes back)
+#
+# [set."parity-matrix"]
+# baseline    = "tools/parity/parity-matrix-baseline.json"
+# measurement = "${PARITY_MEAS:-tmp/parity-current.json}"
+# tolerance   = 0.05                                        # 5% measurement noise tolerance
+#
+# [set."gpu-fps-floor"]
+# baseline    = "perf/fps-floor.json"
+# measurement = "${FPS_MEAS:-tmp/fps-current.json}"
+# direction   = "higher"                                    # throughput floor
+# tolerance   = 0.10

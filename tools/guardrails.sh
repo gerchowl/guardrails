@@ -23,9 +23,13 @@ GATES — block a commit unless escaped:
                       (re-run with --fix to regenerate; commands run with repo-hook trust)
   + gitleaks · rustfmt · clippy -D warnings · cargo-deny
 CI-deep (not pre-commit) — run after `cargo criterion`:
-  perf-budget         gate criterion regressions over a checked-in perf-budgets.toml
-  perf-record         append per-bench medians to perf-history.csv — the PR diff is the report,
-                      git history is the trend (no external service)
+  perf-budget             gate criterion regressions over a checked-in perf-budgets.toml
+  perf-record             append per-bench medians to perf-history.csv — the PR diff is the report,
+                          git history is the trend (no external service)
+  numerical-obligation    ratchet measured numerical contracts (parity errors, HARD counts, coverage %,
+                          binary size) against a checked-in baseline JSON. Distinct from perf-budget:
+                          the baseline MOVES on improvement (--update writes back in the improvement
+                          direction only — refuses to widen slack). Schema in numerical-obligation.toml.
 
 ESCAPE / BYPASS:
   one line    append  // guardrails-ok
@@ -42,6 +46,9 @@ CONFIG KNOBS (in your repo root):
                            literals (write the shared const instead), e.g. "MYAPP_:OTHER_"
   perf-budgets.toml        perf-budget: criterion median ceilings (run after `cargo criterion`)
   perf-history.csv         perf-record: committed per-bench history; the PR diff = the perf report
+  numerical-obligation.toml  numerical-obligation: [set."name"] entries → (baseline json, measurement
+                           json, direction/tolerance/mode/ratchet). Baseline files are version-controlled,
+                           measurement files written by your measurer at gate time.
   deny.toml                cargo-deny: license allow-list + advisory ignores
 
 WIRE THE HOOKS (normally automatic via direnv / nix develop — both stages):

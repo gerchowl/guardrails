@@ -77,6 +77,15 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
     Bespoke (non-criterion) harnesses join via a flat `GUARDRAILS_PERF_RESULTS` JSON map
     (`{"bench_id": value}`) with unit-agnostic `budget` keys and `direction = "higher"` for
     higher-is-better metrics (fps/throughput ceilings — the budget is a floor).
+  - `numerical-obligation` — ratchet any measured numerical quality contract against a
+    checked-in baseline JSON: parity errors, HARD-count audits, coverage %, dead-code %, binary
+    size, dependency count. Same shape as perf-budget but the baseline is the *high-water mark*
+    (best seen) not a fixed ceiling: `--update` rewrites it **in the improvement direction
+    only** (refuses to widen slack on regression — the ratchet, not the budget). Walks every
+    numeric leaf of two same-shape JSON files (`baseline` vs `measurement`); per-set
+    `direction`/`tolerance`/`mode`/`ratchet`. Missing measurement = soft-skip (your measurer
+    hasn't run yet). Wire each obligation as a `[set."name"]` in `numerical-obligation.toml`.
+    **GATE** (CI-deep — run after your measurer).
   - + off-the-shelf in `.pre-commit-config.yaml`: gitleaks, rustfmt, clippy `-D warnings`, cargo-deny.
   - Escape hatch on any line: `guardrails-ok`. **`guardrails info`** prints the gates + every config knob.
 - **Toolbelt** (`lib.mkDevShell`): `guardrails` (info), prek, gitleaks, cargo-deny, cargo-machete,
@@ -105,6 +114,11 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
    `perf-history.csv` so the **PR diff is the perf report** and git history is the trend (no external
    service — git is the time-series store). `cargo-criterion` in the toolbelt; gate big regressions /
    nudge the rest, per the honest-measurement methodology in `docs/CONVENTIONS.md`.
+3a. ~~**Numerical-obligation ratchet**~~ ✅ **shipped** — `numerical-obligation` generalizes the
+    perf-budget pattern for any numerical quality contract (parity error medians, HARD-count
+    audits, coverage %, binary size). Baseline is the *high-water mark*; `--update` ratchets in
+    the improvement direction only. First real consumer: `exoma-ch/talys` (TALYS Rust port —
+    266-nuclide parity matrix + per-adapter HARD-count audit).
 4. **mutation-testing CI** — `cargo-mutants` job (test-quality signal vs coverage theater).
 5. **duplication nudge** — token-based clone detector (reinvention-vs-reuse), tuned threshold.
 6. **diff blast-radius nudge** — flag PRs sprawling across unrelated areas.
