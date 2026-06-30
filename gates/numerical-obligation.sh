@@ -91,34 +91,36 @@ if not sets:
     sys.exit(0)
 
 
-def walk_numeric(obj, path=""):
-    """Yield (dotted-path, float) for every numeric leaf in a JSON object."""
+def walk_numeric(obj, path=()):
+    """Yield (path-tuple, float) for every numeric leaf in a JSON object. Path is
+    a tuple of (key, ...) where each key is the raw dict key or list index — never
+    a joined string, so dict keys containing '.' (energy bins like '0.1–1') stay
+    unambiguous."""
     if isinstance(obj, dict):
         for k, v in obj.items():
-            sub = f"{path}.{k}" if path else str(k)
-            yield from walk_numeric(v, sub)
+            yield from walk_numeric(v, path + (k,))
     elif isinstance(obj, list):
         for i, v in enumerate(obj):
-            sub = f"{path}.[{i}]" if path else f"[{i}]"
-            yield from walk_numeric(v, sub)
+            yield from walk_numeric(v, path + (i,))
     elif isinstance(obj, bool):
         return
     elif isinstance(obj, (int, float)):
         yield path, float(obj)
 
 
-def set_by_path(obj, dotted_path, value):
-    """Mutate `obj` so the leaf at `dotted_path` is `value`. Preserves int-ness when possible."""
-    parts = []
-    for raw in dotted_path.split("."):
-        if raw.startswith("[") and raw.endswith("]"):
-            parts.append(int(raw[1:-1]))
-        else:
-            parts.append(raw)
+def fmt_path(path):
+    """Render a path-tuple for human-readable output. Uses '/' so dotted dict keys
+    stay legible (e.g. 'columns/Reaction/0.1–1' not 'columns.Reaction.0.1–1')."""
+    return "/".join(str(p) for p in path)
+
+
+def set_by_path(obj, path, value):
+    """Mutate `obj` so the leaf at `path` (tuple) is `value`. Preserves int-ness
+    when possible."""
     cur = obj
-    for p in parts[:-1]:
+    for p in path[:-1]:
         cur = cur[p]
-    last = parts[-1]
+    last = path[-1]
     if isinstance(cur[last], int) and value.is_integer():
         cur[last] = int(value)
     else:
@@ -220,7 +222,7 @@ for name, cfg in sets.items():
             label = f"measured {m:g} vs baseline {b:g}"
 
         if regressed:
-            line = f"set.{name}/{k}: {label}, tolerance ±{tol*100:.1f}%"
+            line = f"set.{name}/{fmt_path(k)}: {label}, tolerance ±{tol*100:.1f}%"
             (set_failures if set_mode == "gate" else set_warnings).append(line)
         else:
             set_ok += 1
@@ -229,11 +231,11 @@ for name, cfg in sets.items():
 
     for k in sorted(only_base):
         set_warnings.append(
-            f"set.{name}/{k}: in baseline but not measured — measurer dropped a key?"
+            f"set.{name}/{fmt_path(k)}: in baseline but not measured — measurer dropped a key?"
         )
     for k in sorted(only_meas):
         set_warnings.append(
-            f"set.{name}/{k}: new in measurement, no baseline entry — run --update to absorb"
+            f"set.{name}/{fmt_path(k)}: new in measurement, no baseline entry — run --update to absorb"
         )
 
     print(
