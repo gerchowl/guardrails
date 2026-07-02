@@ -6,7 +6,8 @@
 # by reflex. The one place raw formatting belongs is the schema/redaction surface where
 # the shaped fields are DEFINED; allowlist it with GUARDRAILS_TRACE_ALLOW_GLOBS
 # (colon-separated path globs; a matched file is skipped wholesale). Rust-only (tracing
-# is a Rust crate). tests/examples are exempt; any line with `guardrails-ok` is allowed.
+# is a Rust crate). tests/examples are exempt. Escape: `guardrails-ok` on the line, or on
+# a pure `//` comment line directly above it (stable under rustfmt's comment wrapping).
 #
 # Detection: a `?`/`%` in *field position* — right after a `(` or `,` field separator, or
 # after a `name =` — followed by an identifier start. The delimiter anchor excludes the
@@ -85,6 +86,12 @@ while IFS= read -r f; do
   while IFS=: read -r no _; do
     orig="$(sed -n "${no}p" "$f")"
     case "$orig" in *guardrails-ok*) continue ;; esac
+    # A pure-comment guardrails-ok line directly ABOVE also suppresses: rustfmt wraps
+    # over-long trailing comments onto the next line, so same-line markers aren't stable.
+    if [ "$no" -gt 1 ]; then
+      prev="$(sed -n "$((no - 1))p" "$f" | sed 's/^[[:space:]]*//')"
+      case "$prev" in //*guardrails-ok*) continue ;; esac
+    fi
     printf '  %s:%s:%s\n' "$f" "$no" "$(printf '%s' "$orig" | sed 's/^[[:space:]]*//')"
     hits=$((hits + 1))
   done < <(blank_strings "$f" | grep -nE "$fmt_pat")
