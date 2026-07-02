@@ -52,6 +52,18 @@ assert "cli/ allowed WITH GUARDRAILS_OUTPUT_GLOBS" 0 \
 printf 'fn f() { println!("x"); } // guardrails-ok\n' > "$tmp/src/annotated.rs"
 assert "guardrails-ok annotation suppresses" 0 -- "$tmp/src/annotated.rs"
 
+# Dir-walk mode prefixes every path with `./` (files() sed), so a configured glob
+# WITHOUT a leading `*` (vendor/*, scripts/*) must still match — normalize `./` off
+# before glob matching, in every gate that takes path globs.
+mkdir -p "$tmp/globroot/vendor"
+printf 'fn f() { println!("x"); }\n' > "$tmp/globroot/vendor/out.rs"
+( cd "$tmp/globroot" && GUARDRAILS_OUTPUT_GLOBS='vendor/*' "$debug_gate" ./vendor/out.rs >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — output glob matches ./-prefixed explicit path"
+else echo "FAIL  — output glob missed ./-prefixed explicit path"; fails=$((fails + 1)); fi
+( cd "$tmp/globroot" && GUARDRAILS_OUTPUT_GLOBS='vendor/*' "$debug_gate" . >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — output glob matches under dir-walk (./ prefix)"
+else echo "FAIL  — output glob missed dir-walked ./-prefixed path"; fails=$((fails + 1)); fi
+
 # --- no false positive on innocuous code -------------------------------------
 printf 'fn f() -> u32 { 1 + 1 }\n' > "$tmp/src/clean.rs"
 assert "clean code passes" 0 -- "$tmp/src/clean.rs"
@@ -370,6 +382,12 @@ trace_assert "marker above wrong line does not leak further down" 1 -- 'fn f() {
 }'
 trace_assert "allowlisted schema surface is skipped"     0 \
   "GUARDRAILS_TRACE_ALLOW_GLOBS=*/src/trace.rs" -- 'fn f() { info!(user = ?user); }'
+# allow-glob without a leading `*` must survive the dir-walk `./` prefix too
+mkdir -p "$tmp/globroot/schema"
+printf 'fn f() { info!(user = ?user); }\n' > "$tmp/globroot/schema/fields.rs"
+( cd "$tmp/globroot" && GUARDRAILS_TRACE_ALLOW_GLOBS='schema/*' "$trace_gate" ./schema/fields.rs >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — trace allow-glob matches ./-prefixed path"
+else echo "FAIL  — trace allow-glob missed ./-prefixed path"; fails=$((fails + 1)); fi
 # tests/ path is exempt even for a real formatter (relative path, as pre-commit passes it)
 printf 'fn f() { info!(user = ?user); }\n' > "$tmp/tests/trace_leak.rs"
 ( cd "$tmp" && "$trace_gate" tests/trace_leak.rs >/dev/null 2>&1 )
