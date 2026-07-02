@@ -22,6 +22,9 @@ IFS=: read -ra allow_globs <<< "${GUARDRAILS_TRACE_ALLOW_GLOBS:-}"
 
 # The schema/redaction surface (allowlisted) + the standard built-in exemptions.
 allowed_file() {
+  # Dir-walks arrive './'-prefixed; normalize so allow-globs without a leading
+  # '*' still match (same class as the no-hardcoded src/* normalization).
+  set -- "${1#./}"
   case "$1" in *gates/*|tests/*|*/tests/*|*_test.*|*.test.*|examples/*|*/examples/*) return 0 ;; esac
   local g
   for g in "${allow_globs[@]}"; do
