@@ -353,6 +353,21 @@ trace_assert "plain message string passes"               0 -- 'fn f() { info!("d
 trace_assert "regex inline flags r\"(?i)\" not flagged"  0 -- 'fn f() { Regex::new(r"(?i)x(?:y)(?P<n>z)"); }'
 trace_assert "percent inside a message string passes"    0 -- 'fn f() { info!(pct = p, "{}% done", p); }'
 trace_assert "guardrails-ok suppresses"                  0 -- 'fn f() { info!(?e); } // guardrails-ok'
+# Own-line marker ABOVE the flagged line: rustfmt wraps over-long trailing comments onto the NEXT
+# line (where they suppress nothing), so the stable convention is a pure-comment line above.
+trace_assert "own-line guardrails-ok above suppresses next line" 0 -- 'fn f() {
+    // guardrails-ok(no-raw-trace-fields): pending migration
+    info!(user = ?user);
+}'
+trace_assert "guardrails-ok in a string above does NOT suppress" 1 -- 'fn f() {
+    let x = "guardrails-ok";
+    info!(user = ?user);
+}'
+trace_assert "marker above wrong line does not leak further down" 1 -- 'fn f() {
+    // guardrails-ok(no-raw-trace-fields): pending migration
+    let y = 1;
+    info!(user = ?user);
+}'
 trace_assert "allowlisted schema surface is skipped"     0 \
   "GUARDRAILS_TRACE_ALLOW_GLOBS=*/src/trace.rs" -- 'fn f() { info!(user = ?user); }'
 # tests/ path is exempt even for a real formatter (relative path, as pre-commit passes it)
