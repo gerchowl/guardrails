@@ -85,6 +85,12 @@ for gate in no-debug-leftovers no-fake-impl no-commented-code; do
   else echo "FAIL  — $gate flags top-level tests/ (relative)"; fails=$((fails + 1)); fi
 done
 
+# …and a relative root-src path is still CAUGHT (insurance: no gate may grow an
+# inclusion guard that silently exempts single-crate `src/*` — see no-hardcoded).
+( cd "$tmp" && "$here/no-debug-leftovers.sh" src/leak_dbgx.rs >/dev/null 2>&1 )
+if [ $? = 1 ]; then echo "ok    — no-debug-leftovers catches relative root-src path"
+else echo "FAIL  — no-debug-leftovers missed relative root-src path"; fails=$((fails + 1)); fi
+
 # --- perf-budget gate ---------------------------------------------------------
 # Synthesize criterion estimates + budgets; assert gate/nudge/skip semantics.
 perf_gate="$here/perf-budget.sh"
@@ -164,6 +170,52 @@ hard_assert "guardrails-ok-begin/end block escape works"          0 -- '// guard
 let v = [1.5, 2.7, 300.0];
 // guardrails-ok-end'
 hard_assert "digits inside strings are not values"                0 -- 'let s = "0123456789 and 3.14159";'
+
+# --- no-hardcoded: single-crate root src/ layout (relative paths, as pre-commit passes them) ---
+# The inclusion guard matched only `*/src/*` (workspace `crates/*/src/**`); a root-src repo's
+# `src/foo.rs` never matched, so the gate silently exempted the ENTIRE repo (vacuously green).
+hard_layout() { # desc, want-exit, root, path...
+  local desc="$1" want="$2" hroot="$3"; shift 3
+  ( cd "$hroot" && "$hard_gate" "$@" >/dev/null 2>&1 )
+  if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
+}
+mkdir -p "$tmp/rootcrate/src" "$tmp/rootcrate/crates/lib/src"
+printf 'let n = 100_000;\n' > "$tmp/rootcrate/src/hard_rel.rs"
+printf 'let n = 100_000;\n' > "$tmp/rootcrate/build.rs"
+printf 'let n = 100_000;\n' > "$tmp/rootcrate/crates/lib/src/w.rs"
+hard_layout "root-src relative path is scanned"        1 "$tmp/rootcrate" src/hard_rel.rs
+hard_layout "./-prefixed root-src path is scanned"     1 "$tmp/rootcrate" ./src/hard_rel.rs
+hard_layout "non-src build.rs stays exempt"            0 "$tmp/rootcrate" build.rs
+hard_layout "workspace crates/*/src/* still scanned"   1 "$tmp/rootcrate" crates/lib/src/w.rs
+# discovery isolated to a root WITHOUT crates/, so only root src/ can trip it
+mkdir -p "$tmp/rootonly/src"
+printf 'let n = 100_000;\n' > "$tmp/rootonly/src/hard_rel.rs"
+hard_layout "no-args discovery finds root src/ too"    1 "$tmp/rootonly"
+
+# --- no-hardcoded: #[cfg(test)] exempts the FOLLOWING ITEM, not the rest of the file ---
+# The awk `intest` flag never reset — any prod code after a mid-file test attr/mod was
+# skipped to EOF. Only the attributed item's body (or a brace-less item) is exempt.
+hard_assert "prod value above trailing test mod flagged"          1 -- 'let n = 500;
+#[cfg(test)]
+mod tests { fn t() {} }'
+hard_assert "value inside cfg(test) mod stays exempt"             0 -- '#[cfg(test)]
+mod tests { const N: u32 = 500; }'
+hard_assert "prod value AFTER a cfg(test) fn is flagged"          1 -- '#[cfg(test)]
+fn helper() { let ok = 1; }
+let n = 500;'
+hard_assert "prod value between two cfg(test) mods is flagged"    1 -- '#[cfg(test)]
+mod a { const X: u32 = 900; }
+let n = 500;
+#[cfg(test)]
+mod b { const Y: u32 = 900; }'
+hard_assert "brace-less cfg(test) item does not eat the file"     1 -- '#[cfg(test)]
+use foo::bar;
+let n = 500;'
+hard_assert "multi-line cfg(test) mod body stays exempt"          0 -- '#[cfg(test)]
+mod tests {
+    const N: u32 = 500;
+    fn t() { let x = 3.7; }
+}'
 
 # --- no-conflict-markers: committed markers are flagged; setext headings are not ---
 cm_gate="$here/no-conflict-markers.sh"
