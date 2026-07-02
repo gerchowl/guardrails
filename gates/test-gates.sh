@@ -278,6 +278,22 @@ dd_assert "derived-docs passes after multi-region fix"    0 "$tmp/dd-multi.md"
 # file without any markers → no work, pass
 printf '%s\n' 'plain prose with no markers at all' > "$tmp/dd-none.md"
 dd_assert "derived-docs ignores files without markers" 0 "$tmp/dd-none.md"
+# region body LENGTH changes under --fix while another region follows: the truncation
+# point must be tracked in rebuilt-output coordinates, not source line numbers — using
+# file line numbers eats everything between the regions once the first fill shifts lines.
+printf '%s\n' '<!-- guardrails:derived cmd="seq 3" -->' '<!-- guardrails:derived:end -->' \
+  'between-regions prose' \
+  '<!-- guardrails:derived cmd="echo z" -->' 'STALE' '<!-- guardrails:derived:end -->' \
+  > "$tmp/dd-shift.md"
+dd_assert "derived-docs flags empty region needing multi-line fill" 1 "$tmp/dd-shift.md"
+dd_assert "derived-docs --fix with body-length shift exits 0"       0 "$tmp/dd-shift.md" --fix
+dd_assert "derived-docs passes after shifted multi-region fix"      0 "$tmp/dd-shift.md"
+if grep -q 'between-regions prose' "$tmp/dd-shift.md" && grep -q '^z$' "$tmp/dd-shift.md" \
+  && grep -q '^2$' "$tmp/dd-shift.md" && [ "$(grep -c 'guardrails:derived' "$tmp/dd-shift.md")" = 4 ]; then
+  echo "ok    — derived-docs --fix preserves structure across a body-length shift"
+else
+  echo "FAIL  — derived-docs --fix corrupted the file after a body-length shift"; fails=$((fails + 1))
+fi
 
 # --- ci-shim gate ------------------------------------------------------------
 ci_gate="$here/ci-shim.sh"
