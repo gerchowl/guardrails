@@ -98,8 +98,10 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
    (`gates/no-hardcoded.sh`, tracked `TUNABLES.md`, `.github/workflows/ci.yml`).
 2. ~~**`tracing` starter layer**~~ ✅ **shipped** (`crates/trace/`): `init()` / `init_jsonl()` —
    `EnvFilter` + structured local
-   JSONL layer + the level contract, with `release_max_level_*` + `profiling`/`dhat` features
-   pre-wired (Tier-1/2/3 from CONVENTIONS). One drop-in for the whole observability spine.
+   JSONL layer + the level contract. One drop-in for the whole observability spine. The Tier-1
+   compile-out knobs stay CONSUMER-side by design (`tracing/release_max_level_*` is set in the
+   binary's own Cargo.toml; `profiling`/`dhat` are the consumer's cargo features — dhat's global
+   allocator can only live in the top-level binary): see CONVENTIONS §compile targets.
 3. ~~**Perf harness wiring**~~ ✅ **shipped** — `perf-budget` gates criterion medians against a
    checked-in `perf-budgets.toml`; `perf-record` appends per-bench medians to a committed
    `perf-history.csv` so the **PR diff is the perf report** and git history is the trend (no external
