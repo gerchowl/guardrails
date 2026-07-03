@@ -24,10 +24,12 @@ shift
 [ "${1:-}" = "--" ] && shift
 [ "$#" -gt 0 ] || { echo "guardrails-trace: nothing to run (usage: guardrails-trace <name> -- <cmd...>)" >&2; exit 2; }
 
-# Monotonic ms. GNU date has %N; BSD (macOS) prints a literal 'N' → python3 monotonic fallback
-# (in the toolbelt). Monotonic beats wall-clock: an NTP step mid-commit must not go negative.
+# Millisecond clock. GNU date has %N (wall-clock ms — the dur<0 clamp below absorbs NTP
+# steps); BSD (macOS) prints a literal 'N' → python3 monotonic_ns fallback (in the toolbelt).
+# Probe ONCE at top level — inside $(now_ms) the assignment would die with the subshell.
+GR_DATE_HAS_NS="$([ "$(date +%N)" != "N" ] && echo 1 || echo 0)"
 now_ms() {
-  if [ "${GR_DATE_HAS_NS:=$([ "$(date +%N)" != "N" ] && echo 1 || echo 0)}" = 1 ]; then
+  if [ "$GR_DATE_HAS_NS" = 1 ]; then
     date +%s%3N
   else
     python3 -c 'import time; print(time.monotonic_ns() // 1000000)'
@@ -36,8 +38,12 @@ now_ms() {
 
 # changed_files ≈ trailing args that are existing files (prek appends the staged list after
 # the command; a gate invoked bare scans the tree — count 0 means "whole tree / unknown").
-changed=0
-for a in "$@"; do [ -f "$a" ] && changed=$((changed + 1)); done
+# Skip $1 — the wrapped executable itself may be a file path and is not a changed file.
+changed=0; skip_cmd=1
+for a in "$@"; do
+  if [ "$skip_cmd" = 1 ]; then skip_cmd=0; continue; fi
+  [ -f "$a" ] && changed=$((changed + 1))
+done
 
 start="$(now_ms)"
 "$@"
@@ -54,13 +60,17 @@ mkdir -p "$dir" 2>/dev/null || { exit "$ec"; }  # tracing must never break the g
 
 # Rotate at ~10MB, keep one generation (p95 stabilizes at ~200 samples/gate; this is years).
 size=0; [ -f "$f" ] && size="$(wc -c < "$f")"
+# (Concurrent hooks racing the threshold: the first mv wins, the loser's mv ENOENTs
+# silently — worst case one rotation generation, never the live file.)
 [ "${size:-0}" -gt 10485760 ] && mv -f "$f" "$f.1" 2>/dev/null
 
+# JSON-escape interpolated strings (a repo dir named weird"repo must not corrupt the row).
+esc() { printf '%s' "$1" | sed 's/[\\"]/\\&/g'; }
 verdict=pass; [ "$ec" -ne 0 ] && verdict=fail
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_id="${GR_RUN_ID:-$(date +%s)-$$}"
 trigger="${GR_TRIGGER:-manual}"
 printf '{"v":1,"ts":"%s","run_id":"%s","repo":"%s","gate":"%s","trigger":"%s","verdict":"%s","exit_code":%d,"duration_ms":%d,"changed_files":%d}\n' \
-  "$ts" "$run_id" "$repo" "$gate" "$trigger" "$verdict" "$ec" "$dur" "$changed" >> "$f" 2>/dev/null || true
+  "$ts" "$(esc "$run_id")" "$(esc "$repo")" "$(esc "$gate")" "$(esc "$trigger")" "$verdict" "$ec" "$dur" "$changed" >> "$f" 2>/dev/null || true
 
 exit "$ec"
