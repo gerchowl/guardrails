@@ -196,10 +196,11 @@ forever unattributable.
 
 The model (issue #18), composed from pieces that each ship separately:
 
-1. **Single-sourced gates.** One gate definition feeds every consumer: the gate scripts run as
-   prek hooks locally AND as `checks.guardrails` in the consumer's flake (the template wires
-   it) — so `nix flake check`, and therefore the ci.yml shim, enforces the same set. Never two
-   lists.
+1. **Single-sourced gates.** One gate *definition* feeds every consumer: the same scripts run
+   as prek hooks locally AND as `checks.guardrails` in the consumer's flake (the template
+   wires it) — so `nix flake check`, and therefore the ci.yml shim, enforces them too. Never
+   two *implementations*; the subset per surface may differ by tier (hooks add the
+   staged-file/nudge gates; the flake check runs the tree-scannable core).
 2. **protect-trunk** (the floor): trunk advances by merge/PR only — the "wrong place" class is
    blocked at commit AND at push (remote-ref keyed).
 3. **trunk-merge-gate** (the earned upgrade, solo/trusted-operator repos):

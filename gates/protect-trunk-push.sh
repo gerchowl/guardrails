@@ -38,7 +38,10 @@ trunk_merge_gate() {
   [ "${GUARDRAILS_TRUNK_MERGE_GATE:-0}" = 1 ] || return 1
   local cmd="${GUARDRAILS_TRUNK_MERGE_CMD:-nix flake check}"
   echo "guardrails/protect-trunk-push: trunk-merge-gate — earning the push with: $cmd" >&2
-  if $cmd >&2; then
+  # Subshell re-enables globbing (callers hold set -f for branch-glob safety); the gate is
+  # only as honest as the CMD the consumer picks — a trivially-green CMD is just
+  # ALLOW_TRUNK with extra steps, same trust model, same audit trail (the echo above).
+  if ( set +f; $cmd ) >&2; then
     echo "guardrails/protect-trunk-push: guards green — trunk push earned." >&2
     return 0
   fi
