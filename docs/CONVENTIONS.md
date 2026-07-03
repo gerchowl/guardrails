@@ -46,6 +46,14 @@ into one generated, scannable file (can't drift, unlike a hand-maintained allowl
   first becomes runtime config (so you never expose `workgroup_size` as a nonsense env var).
 - same shape for blessed `unwrap`s, dep additions, and `todo!`s: a generated registry per class.
 
+**Adoption on a legacy tree — ratchet, don't triage.** A gate that demands a big-bang cleanup
+before it can be wired never gets wired. `no-hardcoded` ships a **baseline ratchet**
+(`--record-baseline` → committed `guardrails-baseline.txt`, per-file counts): growth past the
+snapshot **hard-fails** (new magic values are gated from day 1), burn-down **nudges** a re-record
+(bank the win), at-baseline stays **silent** (no noise for debt you already knew about), and
+re-recording **refuses to loosen**. Same shape as flock's DEBT.md census; generalizable to any
+count-based gate.
+
 ## Docs-as-tests — the how-to *is* the test suite
 
 The strongest can't-drift docs are the ones CI executes. Invert "write docs about the code" into
