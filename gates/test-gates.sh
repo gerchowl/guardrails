@@ -266,6 +266,57 @@ mod tests {
     fn t() { let x = 3.7; }
 }'
 
+# --- no-hardcoded: baseline ratchet mode (issue #30) ---------------------------
+# A committed per-file count snapshot flips the gate to enforce-on-growth /
+# nudge-on-burn-down / silent-at-baseline; --record-baseline only ever tightens.
+rroot="$tmp/ratchet"; mkdir -p "$rroot/src"
+rbl="$rroot/bl.txt"
+rat_run() { # env..., --, args... (gate run from $rroot; returns gate exit)
+  local envs=()
+  while [ "$1" != "--" ]; do envs+=("$1"); shift; done
+  shift
+  ( cd "$rroot" && env GUARDRAILS_HARDCODED_BASELINE="$rbl" "${envs[@]}" "$hard_gate" "$@" )
+}
+rat_check() { # desc, want-exit, got-exit
+  if [ "$3" = "$2" ]; then echo "ok    — ratchet: $1"
+  else echo "FAIL  — ratchet: $1 (want exit $2, got $3)"; fails=$((fails + 1)); fi
+}
+printf 'let a = 3.7;\nlet b = 5.9;\n' > "$rroot/src/legacy.rs" # 2 hits of debt
+rat_run -- src/legacy.rs >/dev/null 2>&1
+rat_check "no baseline → all-or-nothing still fails" 1 $?
+rat_run -- --record-baseline >/dev/null 2>&1
+rat_check "--record-baseline snapshots the debt" 0 $?
+if grep -q "src/legacy.rs	2" "$rbl"; then echo "ok    — ratchet: baseline holds the per-file count"
+else echo "FAIL  — ratchet: baseline count wrong ($(cat "$rbl" 2>/dev/null))"; fails=$((fails + 1)); fi
+rat_run -- src/legacy.rs >/dev/null 2>&1
+rat_check "count == baseline passes" 0 $?
+rat_out="$(rat_run -- src/legacy.rs 2>&1)"
+if [ -z "$rat_out" ]; then echo "ok    — ratchet: at-baseline is SILENT (no legacy noise)"
+else echo "FAIL  — ratchet: at-baseline emitted output"; fails=$((fails + 1)); fi
+printf 'let c = 9.9;\n' >> "$rroot/src/legacy.rs" # grow: 3 hits
+rat_run -- src/legacy.rs >/dev/null 2>&1
+rat_check "growth past baseline HARD FAILS" 1 $?
+rat_run -- --record-baseline >/dev/null 2>&1
+rat_check "--record-baseline refuses a regression" 1 $?
+if grep -q "src/legacy.rs	2" "$rbl"; then echo "ok    — ratchet: refused record leaves baseline untouched"
+else echo "FAIL  — ratchet: refused record clobbered the baseline"; fails=$((fails + 1)); fi
+printf 'let a = 3.7;\n' > "$rroot/src/legacy.rs" # burn down: 1 hit
+rat_out="$(rat_run -- src/legacy.rs 2>&1)"; rat_got=$?
+rat_check "burn-down below baseline passes" 0 $rat_got
+if printf '%s' "$rat_out" | grep -q NUDGE; then echo "ok    — ratchet: burn-down nudges to re-record"
+else echo "FAIL  — ratchet: burn-down did not nudge"; fails=$((fails + 1)); fi
+rat_run -- --record-baseline >/dev/null 2>&1
+rat_check "re-record after burn-down tightens" 0 $?
+if grep -q "src/legacy.rs	1" "$rbl"; then echo "ok    — ratchet: baseline ratcheted down (2 → 1)"
+else echo "FAIL  — ratchet: baseline did not tighten"; fails=$((fails + 1)); fi
+printf 'let n = 100_000;\n' > "$rroot/src/newfile.rs" # new file = 0 budget
+rat_run -- src/newfile.rs >/dev/null 2>&1
+rat_check "new file with hits fails (absent = baseline 0)" 1 $?
+rm "$rroot/src/newfile.rs"
+printf 'let clean = 1;\n' > "$rroot/src/clean.rs"
+rat_run -- src/clean.rs >/dev/null 2>&1
+rat_check "clean staged file passes under a baseline" 0 $?
+
 # --- no-conflict-markers: committed markers are flagged; setext headings are not ---
 cm_gate="$here/no-conflict-markers.sh"
 cm_assert() { # desc, want-exit, file
