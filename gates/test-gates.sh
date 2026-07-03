@@ -733,13 +733,23 @@ pt_assert "CI context auto-allows"                       0 CI=true --
 pt_assert "GITHUB_ACTIONS context auto-allows"           0 GITHUB_ACTIONS=true --
 pt_assert "knob REPLACES default (master not protected)" 0 GUARDRAILS_PROTECTED_BRANCHES='release/*' --
 pt_assert "empty knob disables protection"               0 GUARDRAILS_PROTECTED_BRANCHES= --
-git -C "$ptr" switch -q -c release/1.2/hotfix
+# pt_on: switch AND verify — an invalid branch name must fail the row loudly, not
+# leave HEAD on the previous branch silently mis-testing (a review caught two such rows).
+pt_on() {
+  git -C "$ptr" switch -q -c "$1" 2>/dev/null
+  [ "$(git -C "$ptr" symbolic-ref --short HEAD)" = "$1" ] && return 0
+  echo "FAIL  — protect-trunk: could not create test branch '$1'"; fails=$((fails + 1)); return 1
+}
+pt_on release/1.2/hotfix && {
 pt_assert "glob knob matches nested release branch"      1 GUARDRAILS_PROTECTED_BRANCHES='release/*' --
 pt_assert "boundary empties in ':main:' don't match-all" 0 GUARDRAILS_PROTECTED_BRANCHES=':main:' --
-git -C "$ptr" switch -q -c 'feat/we ird'
-pt_assert "branch name with a space passes"              0 --
-git -C "$ptr" switch -q -c 'weird[x]'
-pt_assert "glob-char branch name doesn't self-match"     0 --
+}
+# git refuses space/'['/'*' in ref names, so hostile-branch rows are unrepresentable;
+# glob semantics are exercised from the PATTERN side instead (? must match exactly one char).
+pt_on weirdo && {
+pt_assert "glob ? pattern matches one extra char"        1 GUARDRAILS_PROTECTED_BRANCHES='weird?' --
+pt_assert "glob ? pattern needs its char (no match)"     0 GUARDRAILS_PROTECTED_BRANCHES='weirdo?' --
+}
 mkdir -p "$tmp/pt-notrepo"
 ( cd "$tmp/pt-notrepo" && env -u CI -u GITHUB_ACTIONS "$pt_gate" >/dev/null 2>&1 )
 if [ $? = 0 ]; then echo "ok    — protect-trunk: outside a git repo is allowed"
@@ -756,7 +766,7 @@ ptp_assert() { # desc, want-exit, env-assignments..., --, stdin-lines...
   local envs=()
   while [ "$1" != "--" ]; do envs+=("$1"); shift; done
   shift
-  printf '%s\n' "$@" | env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES "${envs[@]}" "$ptp_gate" >/dev/null 2>&1
+  printf '%s\n' "$@" | env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES -u PRE_COMMIT_REMOTE_BRANCH "${envs[@]}" "$ptp_gate" >/dev/null 2>&1
   local got=$?
   if [ "$got" = "$want" ]; then echo "ok    — protect-trunk-push: $desc"
   else echo "FAIL  — protect-trunk-push: $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
@@ -772,6 +782,12 @@ ptp_assert "CI context auto-allows"                   0 CI=true -- "refs/heads/f
 ptp_assert "knob glob protects release/* remote ref"  1 GUARDRAILS_PROTECTED_BRANCHES='release/*' -- "refs/heads/feat/x $sha_a refs/heads/release/1.2 $sha_a"
 ptp_assert "empty knob disables push protection"      0 GUARDRAILS_PROTECTED_BRANCHES= -- "refs/heads/feat/x $sha_a refs/heads/main $sha_a"
 ptp_assert "empty stdin (nothing to push) passes"     0 -- ""
+# prek/pre-commit run system hooks with stdin nulled and export the parsed remote ref
+# instead (PRE_COMMIT_REMOTE_BRANCH, full refs/heads/... form) — the env fallback path.
+ptp_assert "env fallback blocks protected ref (prek)" 1 PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- ""
+ptp_assert "env fallback passes feature ref (prek)"   0 PRE_COMMIT_REMOTE_BRANCH=refs/heads/feat/x -- ""
+ptp_assert "stdin takes precedence over env fallback" 0 PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- "refs/heads/feat/x $sha_a refs/heads/feat/x $sha_a"
+ptp_assert "env fallback honors empty-knob opt-out"   0 GUARDRAILS_PROTECTED_BRANCHES= PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- ""
 
 echo
 if [ "$fails" -gt 0 ]; then

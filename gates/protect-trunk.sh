@@ -49,7 +49,7 @@ IFS=: read -ra protected <<< "${GUARDRAILS_PROTECTED_BRANCHES-main:master}"
 trunk_commit_allowed() { # $1 = branch
   local pat
   set -f # branch/pattern glob chars must not pathname-expand
-  for pat in "${protected[@]}"; do
+  for pat in "${protected[@]:-}"; do # :- keeps bash 3.2 alive on the empty-knob opt-out path
     [ -n "$pat" ] || continue # `:main:` boundary empties must not match everything
     # shellcheck disable=SC2254  # $pat is intentionally a glob
     case "$1" in $pat) set +f; return 1 ;; esac
