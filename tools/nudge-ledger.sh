@@ -26,6 +26,11 @@
 # SHA may be unreachable — `git rev-list --count` fails, age falls back to 0 (fail-open: a bad
 # ledger can silence escalation, never falsely block) and ONE warning goes to stderr so the
 # hole is visible instead of silent.
+#
+# Ledger format note: rows are key<TAB>first_seen<TAB>count. #31-era duplication ledgers had a
+# 4th span column — the reader takes the first three fields (col 3 kept its meaning), so old
+# committed ledgers load correctly and the first re-record drops the span column. LOAD-BEARING:
+# col 3 must stay "the growth-tracked count" in any future format change.
 set -uo pipefail
 TAB="$(printf '\t')"
 
