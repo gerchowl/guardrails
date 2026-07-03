@@ -100,15 +100,20 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
    (`gates/no-hardcoded.sh`, tracked `TUNABLES.md`, `.github/workflows/ci.yml`).
 2. ~~**`tracing` starter layer**~~ ✅ **shipped** (`crates/trace/`): `init()` / `init_jsonl()` —
    `EnvFilter` + structured local
-   JSONL layer + the level contract, with `release_max_level_*` + `profiling`/`dhat` features
-   pre-wired (Tier-1/2/3 from CONVENTIONS). One drop-in for the whole observability spine.
+   JSONL layer + the level contract. One drop-in for the whole observability spine. The Tier-1
+   compile-out knobs stay CONSUMER-side by design (`tracing/release_max_level_*` is set in the
+   binary's own Cargo.toml; `profiling`/`dhat` are the consumer's cargo features — dhat's global
+   allocator can only live in the top-level binary): see CONVENTIONS §compile targets.
 3. ~~**Perf harness wiring**~~ ✅ **shipped** — `perf-budget` gates criterion medians against a
    checked-in `perf-budgets.toml`; `perf-record` appends per-bench medians to a committed
    `perf-history.csv` so the **PR diff is the perf report** and git history is the trend (no external
    service — git is the time-series store). `cargo-criterion` in the toolbelt; gate big regressions /
    nudge the rest, per the honest-measurement methodology in `docs/CONVENTIONS.md`.
 4. **mutation-testing CI** — `cargo-mutants` job (test-quality signal vs coverage theater).
-5. **duplication nudge** — token-based clone detector (reinvention-vs-reuse), tuned threshold.
+5. ~~**duplication nudge**~~ ✅ **shipped** — `duplication` flags a ≥K normalized-line block cloned
+   across ≥2 sites (reinvention-vs-reuse). Precision-first exact-window match keeps false positives
+   near zero; `GUARDRAILS_DUP_MIN_LINES` / `_ENFORCE` / `_ALLOW` knobs. Diverged (type-4 "same intent,
+   different code") clones stay out of scope — fuzzy similarity's noise floor is too high to nudge on.
 6. **diff blast-radius nudge** — flag PRs sprawling across unrelated areas.
 7. **generated escape registries** — blessed `unwrap`/dep/`todo!` lists, generated not hand-kept.
 8. **non-Rust gate coverage** — the gates already handle TS/JS/Py/Go; add ecosystem tools

@@ -52,6 +52,18 @@ assert "cli/ allowed WITH GUARDRAILS_OUTPUT_GLOBS" 0 \
 printf 'fn f() { println!("x"); } // guardrails-ok\n' > "$tmp/src/annotated.rs"
 assert "guardrails-ok annotation suppresses" 0 -- "$tmp/src/annotated.rs"
 
+# Dir-walk mode prefixes every path with `./` (files() sed), so a configured glob
+# WITHOUT a leading `*` (vendor/*, scripts/*) must still match — normalize `./` off
+# before glob matching, in every gate that takes path globs.
+mkdir -p "$tmp/globroot/vendor"
+printf 'fn f() { println!("x"); }\n' > "$tmp/globroot/vendor/out.rs"
+( cd "$tmp/globroot" && GUARDRAILS_OUTPUT_GLOBS='vendor/*' "$debug_gate" ./vendor/out.rs >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — output glob matches ./-prefixed explicit path"
+else echo "FAIL  — output glob missed ./-prefixed explicit path"; fails=$((fails + 1)); fi
+( cd "$tmp/globroot" && GUARDRAILS_OUTPUT_GLOBS='vendor/*' "$debug_gate" . >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — output glob matches under dir-walk (./ prefix)"
+else echo "FAIL  — output glob missed dir-walked ./-prefixed path"; fails=$((fails + 1)); fi
+
 # --- no false positive on innocuous code -------------------------------------
 printf 'fn f() -> u32 { 1 + 1 }\n' > "$tmp/src/clean.rs"
 assert "clean code passes" 0 -- "$tmp/src/clean.rs"
@@ -84,6 +96,12 @@ for gate in no-debug-leftovers no-fake-impl no-commented-code; do
   if [ $? = 0 ]; then echo "ok    — $gate excludes top-level tests/ (relative)"
   else echo "FAIL  — $gate flags top-level tests/ (relative)"; fails=$((fails + 1)); fi
 done
+
+# …and a relative root-src path is still CAUGHT (insurance: no gate may grow an
+# inclusion guard that silently exempts single-crate `src/*` — see no-hardcoded).
+( cd "$tmp" && "$here/no-debug-leftovers.sh" src/leak_dbgx.rs >/dev/null 2>&1 )
+if [ $? = 1 ]; then echo "ok    — no-debug-leftovers catches relative root-src path"
+else echo "FAIL  — no-debug-leftovers missed relative root-src path"; fails=$((fails + 1)); fi
 
 # --- perf-budget gate ---------------------------------------------------------
 # Synthesize criterion estimates + budgets; assert gate/nudge/skip semantics.
@@ -165,6 +183,52 @@ let v = [1.5, 2.7, 300.0];
 // guardrails-ok-end'
 hard_assert "digits inside strings are not values"                0 -- 'let s = "0123456789 and 3.14159";'
 
+# --- no-hardcoded: single-crate root src/ layout (relative paths, as pre-commit passes them) ---
+# The inclusion guard matched only `*/src/*` (workspace `crates/*/src/**`); a root-src repo's
+# `src/foo.rs` never matched, so the gate silently exempted the ENTIRE repo (vacuously green).
+hard_layout() { # desc, want-exit, root, path...
+  local desc="$1" want="$2" hroot="$3"; shift 3
+  ( cd "$hroot" && "$hard_gate" "$@" >/dev/null 2>&1 )
+  if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
+}
+mkdir -p "$tmp/rootcrate/src" "$tmp/rootcrate/crates/lib/src"
+printf 'let n = 100_000;\n' > "$tmp/rootcrate/src/hard_rel.rs"
+printf 'let n = 100_000;\n' > "$tmp/rootcrate/build.rs"
+printf 'let n = 100_000;\n' > "$tmp/rootcrate/crates/lib/src/w.rs"
+hard_layout "root-src relative path is scanned"        1 "$tmp/rootcrate" src/hard_rel.rs
+hard_layout "./-prefixed root-src path is scanned"     1 "$tmp/rootcrate" ./src/hard_rel.rs
+hard_layout "non-src build.rs stays exempt"            0 "$tmp/rootcrate" build.rs
+hard_layout "workspace crates/*/src/* still scanned"   1 "$tmp/rootcrate" crates/lib/src/w.rs
+# discovery isolated to a root WITHOUT crates/, so only root src/ can trip it
+mkdir -p "$tmp/rootonly/src"
+printf 'let n = 100_000;\n' > "$tmp/rootonly/src/hard_rel.rs"
+hard_layout "no-args discovery finds root src/ too"    1 "$tmp/rootonly"
+
+# --- no-hardcoded: #[cfg(test)] exempts the FOLLOWING ITEM, not the rest of the file ---
+# The awk `intest` flag never reset — any prod code after a mid-file test attr/mod was
+# skipped to EOF. Only the attributed item's body (or a brace-less item) is exempt.
+hard_assert "prod value above trailing test mod flagged"          1 -- 'let n = 500;
+#[cfg(test)]
+mod tests { fn t() {} }'
+hard_assert "value inside cfg(test) mod stays exempt"             0 -- '#[cfg(test)]
+mod tests { const N: u32 = 500; }'
+hard_assert "prod value AFTER a cfg(test) fn is flagged"          1 -- '#[cfg(test)]
+fn helper() { let ok = 1; }
+let n = 500;'
+hard_assert "prod value between two cfg(test) mods is flagged"    1 -- '#[cfg(test)]
+mod a { const X: u32 = 900; }
+let n = 500;
+#[cfg(test)]
+mod b { const Y: u32 = 900; }'
+hard_assert "brace-less cfg(test) item does not eat the file"     1 -- '#[cfg(test)]
+use foo::bar;
+let n = 500;'
+hard_assert "multi-line cfg(test) mod body stays exempt"          0 -- '#[cfg(test)]
+mod tests {
+    const N: u32 = 500;
+    fn t() { let x = 3.7; }
+}'
+
 # --- no-conflict-markers: committed markers are flagged; setext headings are not ---
 cm_gate="$here/no-conflict-markers.sh"
 cm_assert() { # desc, want-exit, file
@@ -226,6 +290,22 @@ dd_assert "derived-docs passes after multi-region fix"    0 "$tmp/dd-multi.md"
 # file without any markers → no work, pass
 printf '%s\n' 'plain prose with no markers at all' > "$tmp/dd-none.md"
 dd_assert "derived-docs ignores files without markers" 0 "$tmp/dd-none.md"
+# region body LENGTH changes under --fix while another region follows: the truncation
+# point must be tracked in rebuilt-output coordinates, not source line numbers — using
+# file line numbers eats everything between the regions once the first fill shifts lines.
+printf '%s\n' '<!-- guardrails:derived cmd="seq 3" -->' '<!-- guardrails:derived:end -->' \
+  'between-regions prose' \
+  '<!-- guardrails:derived cmd="echo z" -->' 'STALE' '<!-- guardrails:derived:end -->' \
+  > "$tmp/dd-shift.md"
+dd_assert "derived-docs flags empty region needing multi-line fill" 1 "$tmp/dd-shift.md"
+dd_assert "derived-docs --fix with body-length shift exits 0"       0 "$tmp/dd-shift.md" --fix
+dd_assert "derived-docs passes after shifted multi-region fix"      0 "$tmp/dd-shift.md"
+if grep -q 'between-regions prose' "$tmp/dd-shift.md" && grep -q '^z$' "$tmp/dd-shift.md" \
+  && grep -q '^2$' "$tmp/dd-shift.md" && [ "$(grep -c 'guardrails:derived' "$tmp/dd-shift.md")" = 4 ]; then
+  echo "ok    — derived-docs --fix preserves structure across a body-length shift"
+else
+  echo "FAIL  — derived-docs --fix corrupted the file after a body-length shift"; fails=$((fails + 1))
+fi
 
 # --- ci-shim gate ------------------------------------------------------------
 ci_gate="$here/ci-shim.sh"
@@ -285,13 +365,148 @@ trace_assert "plain message string passes"               0 -- 'fn f() { info!("d
 trace_assert "regex inline flags r\"(?i)\" not flagged"  0 -- 'fn f() { Regex::new(r"(?i)x(?:y)(?P<n>z)"); }'
 trace_assert "percent inside a message string passes"    0 -- 'fn f() { info!(pct = p, "{}% done", p); }'
 trace_assert "guardrails-ok suppresses"                  0 -- 'fn f() { info!(?e); } // guardrails-ok'
+# Own-line marker ABOVE the flagged line: rustfmt wraps over-long trailing comments onto the NEXT
+# line (where they suppress nothing), so the stable convention is a pure-comment line above.
+trace_assert "own-line guardrails-ok above suppresses next line" 0 -- 'fn f() {
+    // guardrails-ok(no-raw-trace-fields): pending migration
+    info!(user = ?user);
+}'
+trace_assert "guardrails-ok in a string above does NOT suppress" 1 -- 'fn f() {
+    let x = "guardrails-ok";
+    info!(user = ?user);
+}'
+trace_assert "marker above wrong line does not leak further down" 1 -- 'fn f() {
+    // guardrails-ok(no-raw-trace-fields): pending migration
+    let y = 1;
+    info!(user = ?user);
+}'
 trace_assert "allowlisted schema surface is skipped"     0 \
   "GUARDRAILS_TRACE_ALLOW_GLOBS=*/src/trace.rs" -- 'fn f() { info!(user = ?user); }'
+# allow-glob without a leading `*` must survive the dir-walk `./` prefix too
+mkdir -p "$tmp/globroot/schema"
+printf 'fn f() { info!(user = ?user); }\n' > "$tmp/globroot/schema/fields.rs"
+( cd "$tmp/globroot" && GUARDRAILS_TRACE_ALLOW_GLOBS='schema/*' "$trace_gate" ./schema/fields.rs >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — trace allow-glob matches ./-prefixed path"
+else echo "FAIL  — trace allow-glob missed ./-prefixed path"; fails=$((fails + 1)); fi
 # tests/ path is exempt even for a real formatter (relative path, as pre-commit passes it)
 printf 'fn f() { info!(user = ?user); }\n' > "$tmp/tests/trace_leak.rs"
 ( cd "$tmp" && "$trace_gate" tests/trace_leak.rs >/dev/null 2>&1 )
 if [ $? = 0 ]; then echo "ok    — no-raw-trace-fields excludes top-level tests/ (relative)"
 else echo "FAIL  — no-raw-trace-fields flags top-level tests/ (relative)"; fails=$((fails + 1)); fi
+
+# --- duplication: token-window clone nudge -----------------------------------
+# Reinvention-vs-reuse detector. Multi-file by nature, so it runs on a DIR root
+# (not a single file). Default = NUDGE (report, exit 0); GUARDRAILS_DUP_ENFORCE=1
+# promotes to a hard gate. Precision-first: an exact ≥K normalized-line match is
+# a real clone, so false positives stay near zero (a noisy nudge trains bypass).
+dup_gate="$here/duplication.sh"
+# dup_assert <desc> <want-exit> <env...> -- <dir>
+dup_assert() {
+  local desc="$1" want="$2"; shift 2
+  local env=()
+  while [ "$1" != "--" ]; do env+=("$1"); shift; done
+  shift
+  env "${env[@]}" "$dup_gate" "$1" >/dev/null 2>&1
+  local got=$?
+  if [ "$got" = "$want" ]; then echo "ok    — $desc"
+  else echo "FAIL  — $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
+}
+
+# A ≥6 significant-line block (the class of hand-rolled modal/confirm handler
+# that drifts into N near-identical copies).
+dup_block() { cat <<'RS'
+fn handle_close(state: &mut State) {
+    state.dialog = None;
+    state.mode = if state.active.is_some() {
+        Mode::Terminal
+    } else {
+        Mode::Navigate
+    };
+    state.dirty = true;
+}
+RS
+}
+
+# CAUGHT: same block in two files, differing only in indentation + comments
+# (normalization must see through whitespace/comment noise).
+mkdir -p "$tmp/dup_clone"
+dup_block > "$tmp/dup_clone/a.rs"
+{ echo "// an unrelated leading comment"; dup_block | sed 's/^/    /'; echo "    // trailing note"; } > "$tmp/dup_clone/b.rs"
+dup_assert "clone across two files is a NUDGE (exit 0)"          0 -- "$tmp/dup_clone"
+dup_assert "clone promoted to hard gate under ENFORCE"          1 "GUARDRAILS_DUP_ENFORCE=1" -- "$tmp/dup_clone"
+
+# NO FALSE POSITIVE: two genuinely distinct files.
+mkdir -p "$tmp/dup_unique"
+printf 'fn alpha() {\n    let x = compute_alpha();\n    x + 1\n}\n' > "$tmp/dup_unique/a.rs"
+printf 'fn beta() {\n    let y = compute_beta();\n    y * 2\n}\n'    > "$tmp/dup_unique/b.rs"
+dup_assert "distinct files produce no clone"                    0 "GUARDRAILS_DUP_ENFORCE=1" -- "$tmp/dup_unique"
+
+# THRESHOLD: an identical block of only 5 significant lines (< K=6) is ignored.
+mkdir -p "$tmp/dup_short"
+short_block() { cat <<'RS'
+fn s() {
+    let a = one();
+    let b = two();
+    let c = three();
+    let d = four();
+}
+RS
+}
+short_block > "$tmp/dup_short/a.rs"; short_block > "$tmp/dup_short/b.rs"
+dup_assert "shared block below the ≥6-line threshold is ignored" 0 "GUARDRAILS_DUP_ENFORCE=1" -- "$tmp/dup_short"
+
+# ESCAPE: guardrails-ok on one twin removes it from the corpus → no pair.
+mkdir -p "$tmp/dup_ok"
+dup_block > "$tmp/dup_ok/a.rs"
+{ echo "// guardrails-ok"; dup_block; } > "$tmp/dup_ok/b.rs"
+dup_assert "guardrails-ok on one twin suppresses the pair"      0 "GUARDRAILS_DUP_ENFORCE=1" -- "$tmp/dup_ok"
+
+# ESCAPE: GUARDRAILS_DUP_ALLOW glob excludes a twin the same way.
+dup_assert "GUARDRAILS_DUP_ALLOW glob excludes a twin"         0 "GUARDRAILS_DUP_ENFORCE=1" "GUARDRAILS_DUP_ALLOW=*/b.rs" -- "$tmp/dup_clone"
+
+# TUNABLE: dropping the threshold to 5 makes the short block fire.
+dup_assert "GUARDRAILS_DUP_MIN_LINES=5 catches the 5-line block" 1 "GUARDRAILS_DUP_ENFORCE=1" "GUARDRAILS_DUP_MIN_LINES=5" -- "$tmp/dup_short"
+
+# DETERMINISM: guardrails bans wall-clock/random for reproducibility — identical
+# input must yield byte-identical output across runs.
+r1="$(GUARDRAILS_DUP_ENFORCE=1 "$dup_gate" "$tmp/dup_clone" 2>&1)"
+r2="$(GUARDRAILS_DUP_ENFORCE=1 "$dup_gate" "$tmp/dup_clone" 2>&1)"
+if [ "$r1" = "$r2" ]; then echo "ok    — duplication report is deterministic"
+else echo "FAIL  — duplication report differs across runs"; fails=$((fails + 1)); fi
+
+# --- duplication: staleness escalation (ledger + git-age → auto-promote) ------
+# The nudge earns the right to become a gate: a clone that PERSISTS undealt-with
+# across commits has a decaying false-positive probability, so age promotes it
+# nudge → hard block. Ledger is committed state (like perf-history.csv); age is
+# counted in COMMITS (git as the deterministic clock — no wall-time).
+led="$tmp/dup_ledger.tsv"
+aged="$tmp/dup_aged"
+mkdir -p "$aged"
+dup_block > "$aged/a.rs"
+dup_block > "$aged/b.rs"
+git -C "$aged" init -q
+git -C "$aged" config user.email t@t; git -C "$aged" config user.name t
+git -C "$aged" add -A && git -C "$aged" commit -q -m c1
+# --record stamps the clone group's first-seen at HEAD (c1) into the ledger.
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" "$dup_gate" --record "$aged" >/dev/null 2>&1 )
+if [ -s "$led" ]; then echo "ok    — --record writes the clone ledger"
+else echo "FAIL  — --record did not write a ledger"; fails=$((fails + 1)); fi
+# One more commit → the clone has persisted 1 commit since first-seen.
+: > "$aged/other.txt"; git -C "$aged" add -A && git -C "$aged" commit -q -m c2
+# age(1) ≥ ENFORCE_AGE(1) → persisted clone auto-promotes to a hard block…
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" GUARDRAILS_DUP_ENFORCE_AGE=1 "$dup_gate" "$aged" >/dev/null 2>&1 )
+if [ $? = 1 ]; then echo "ok    — persisted clone auto-promotes to ENFORCE by age"
+else echo "FAIL  — persisted clone did not auto-promote"; fails=$((fails + 1)); fi
+# …but a threshold it has not reached keeps it a nudge (exit 0).
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" GUARDRAILS_DUP_ENFORCE_AGE=99 "$dup_gate" "$aged" >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — clone below the age threshold stays a nudge"
+else echo "FAIL  — clone below age threshold wrongly blocked"; fails=$((fails + 1)); fi
+# Resolving it (decorate one twin) drops it from the ledger on the next --record.
+{ echo "// guardrails-ok"; dup_block; } > "$aged/b.rs"
+git -C "$aged" add -A && git -C "$aged" commit -q -m c3
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" "$dup_gate" --record "$aged" >/dev/null 2>&1 )
+if [ ! -s "$led" ]; then echo "ok    — resolved clone drops from the ledger (ratchet-shrink)"
+else echo "FAIL  — resolved clone lingers in the ledger"; fails=$((fails + 1)); fi
 
 echo
 if [ "$fails" -gt 0 ]; then
