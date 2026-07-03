@@ -18,7 +18,9 @@ GATES — block a commit unless escaped:
   protect-trunk       HEAD is a protected branch (main/master) — trunk advances by merge/PR only;
                       the pre-push twin refuses pushes advancing a protected REMOTE ref
                       (GUARDRAILS_PROTECTED_BRANCHES to change/disable · GUARDRAILS_ALLOW_TRUNK=1
-                      for an intentional hotfix · CI auto-allowed)
+                      for an intentional hotfix · CI auto-allowed). Solo/trunk-flow upgrade:
+                      GUARDRAILS_TRUNK_MERGE_GATE=1 lets the push-side gate EARN a trunk push —
+                      allowed iff GUARDRAILS_TRUNK_MERGE_CMD (default `nix flake check`) is green
   no-fake-impl        todo!()/unimplemented!()/FIXME/placeholder-impl — stubs shipped as "done"
   no-debug-leftovers  dbg!/print!/println!/eprint!/eprintln!/console.log outside main/bin/tests
   no-commented-code   commented-out code graveyards
