@@ -4,6 +4,23 @@
 repos:
   - repo: local
     hooks:
+      # protect-trunk: trunk advances by merge/PR only, never a local commit/push.
+      # PR-flow repos: keep as-is. Trunk-flow (solo, commit-to-main) repos: opt out with
+      #   export GUARDRAILS_PROTECTED_BRANCHES=""   (e.g. .envrc / devShell)
+      # Intentional trunk write (hotfix): GUARDRAILS_ALLOW_TRUNK=1 git commit/push.
+      - id: protect-trunk
+        name: no direct commits on trunk (branch, then PR)
+        entry: guardrails-protect-trunk
+        language: system
+        always_run: true
+        pass_filenames: false
+      - id: protect-trunk-push
+        name: no pushes advancing a protected remote ref
+        entry: guardrails-protect-trunk-push
+        language: system
+        stages: [pre-push]
+        always_run: true
+        pass_filenames: false
       - id: no-fake-impl
         name: no fake/placeholder implementations
         entry: guardrails-no-fake-impl

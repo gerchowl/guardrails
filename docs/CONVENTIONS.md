@@ -8,6 +8,7 @@ rest, run deep checks async.* This doc is the contract; `flake.nix` ships the to
 
 | Check | Catches (agent failure mode) | Mode |
 |---|---|---|
+| protect-trunk (+ pre-push twin on the remote ref) | right change, wrong place: direct commit/push to trunk (agents `cd`-ing between clones/worktrees) | **GATE** |
 | no-fake-impl (`todo!`/stub/placeholder) | deceptive "done" | **GATE** |
 | no-debug-leftovers (`dbg!`/println/console.log) | stdout spew instead of facade | **GATE** |
 | no-commented-code | code graveyards | **GATE** |
@@ -15,7 +16,6 @@ rest, run deep checks async.* This doc is the contract; `flake.nix` ships the to
 | adr-matrix (every Accepted ADR cited in the status matrix) | decided designs outrun the feature/status matrix | **GATE** |
 | no-conflict-markers | committed merge-conflict debris | **GATE** |
 | no-raw-trace-fields (`?`/`%` outside the schema file) | PII/secret leak into the audit JSONL | **GATE** |
-| numerical-obligation (ratcheting baselines) | numerical quality contracts silently regress | **GATE** (opt-in) |
 | doc-tests (doctest / trycmd / `mdbook test`) | examples & CLI output drift from real behaviour | **CONVENTION** (consumer-wired, see below) |
 | gitleaks | committed secrets | **GATE** |
 | rustfmt --check, clippy -D warnings | drift from baseline | **GATE** |
