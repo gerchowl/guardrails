@@ -23,7 +23,8 @@ allowed_output() {
   local g
   for g in "${output_globs[@]}"; do
     [ -n "$g" ] || continue
-    # shellcheck disable=SC2254 -- $g is intentionally a glob pattern
+    # $g is intentionally a glob pattern for case-matching
+    # shellcheck disable=SC2254
     case "$1" in $g) return 0 ;; esac
   done
   return 1
@@ -36,17 +37,37 @@ files() {
   done
 }
 
+# Filtering is pure bash (no per-file process). Rust vs web/py use different
+# patterns, so partition into two batches, then run grep ONCE per batch instead
+# of once per file — the fork-exec per file was the whole cost on a large tree.
+rust_files=(); web_files=()
 while IFS= read -r f; do
-  case "$f" in *.rs|*.ts|*.tsx|*.js|*.mjs|*.py) ;; *) continue ;; esac
+  case "$f" in *.rs) ;; *.ts|*.tsx|*.js|*.mjs|*.py) ;; *) continue ;; esac
   allowed_output "$f" && continue
-  pat='dbg!\(|console\.(log|debug)\(|[[:space:]]print\('
-  case "$f" in *.rs) pat='dbg!\(|e?println!\(|e?print!\(' ;; esac
-  while IFS=: read -r no line; do
-    case "$line" in *guardrails-ok*) continue ;; esac
-    printf '  %s:%s:%s\n' "$f" "$no" "$(printf '%s' "$line" | sed 's/^[[:space:]]*//')"
-    hits=$((hits + 1))
-  done < <(grep -nE "$pat" "$f" 2>/dev/null)
+  case "$f" in *.rs) rust_files+=("$f") ;; *) web_files+=("$f") ;; esac
 done < <(files "${roots[@]}")
+
+rust_pat='dbg!\(|e?println!\(|e?print!\('
+web_pat='dbg!\(|console\.(log|debug)\(|[[:space:]]print\('
+
+# grep -nHE over a NUL-delimited batch: -H forces the file: prefix even for a
+# single file, xargs -0 survives paths with spaces. Length-guarded so an empty
+# batch never feeds grep an empty arg list (which would block on stdin).
+matches=""
+if [ "${#rust_files[@]}" -gt 0 ]; then
+  matches+="$(printf '%s\0' "${rust_files[@]}" | xargs -0 grep -nHE "$rust_pat" 2>/dev/null)"$'\n'
+fi
+if [ "${#web_files[@]}" -gt 0 ]; then
+  matches+="$(printf '%s\0' "${web_files[@]}" | xargs -0 grep -nHE "$web_pat" 2>/dev/null)"$'\n'
+fi
+
+# Drop `guardrails-ok`-annotated lines (per-line escape); each grep line is one
+# source line, so filtering the joined `file:line:content` stays per-line.
+leaks="$(printf '%s' "$matches" | grep -v 'guardrails-ok' | grep -vE '^[[:space:]]*$')"
+if [ -n "$leaks" ]; then
+  printf '%s\n' "$leaks" | sed -E 's/^([^:]+:[0-9]+:)[[:space:]]*/  \1/'
+  hits=$(printf '%s\n' "$leaks" | grep -c .)
+fi
 
 if [ "$hits" -gt 0 ]; then
   echo "guardrails/no-debug-leftovers: $hits debug-print(s) — use the tracing facade, or annotate 'guardrails-ok'." >&2
