@@ -34,6 +34,8 @@
           install -m755 ${./tools/freshness.sh} $out/bin/guardrails-freshness
           install -m755 ${./tools/freshness-refresh.sh} $out/bin/guardrails-freshness-refresh
           install -m755 ${./tools/freshness-nudge.sh} $out/bin/guardrails-freshness-nudge
+          install -m755 ${./tools/trace.sh} $out/bin/guardrails-trace
+          install -m755 ${./tools/trace-report.sh} $out/bin/guardrails-trace-report
           patchShebangs $out/bin   # see gates above — sandbox has no /usr/bin/env
         '';
 

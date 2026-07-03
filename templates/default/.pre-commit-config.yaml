@@ -1,6 +1,11 @@
 # guardrails — curated gate set, run by `prek` (pre-commit compatible). Tools come from the
 # guardrails devShell (lib.mkDevShell), so `entry` commands are on PATH. Copy this into a consuming
 # repo (or scaffold via `nix flake init -t github:gerchowl/guardrails`).
+#
+# Every entry is wrapped in `guardrails-trace <name> -- <cmd>`: one JSONL row per gate run
+# (duration/verdict/exit) in the XDG cache, streams + exit code untouched. That history powers
+# `guardrails info --perf` (tiering data) and `guardrails last` (a piped stdout can't swallow a
+# FAIL). Drop the wrapper from any entry to opt that gate out of tracing.
 repos:
   - repo: local
     hooks:
@@ -10,51 +15,51 @@ repos:
       # Intentional trunk write (hotfix): GUARDRAILS_ALLOW_TRUNK=1 git commit/push.
       - id: protect-trunk
         name: no direct commits on trunk (branch, then PR)
-        entry: guardrails-protect-trunk
+        entry: guardrails-trace protect-trunk -- guardrails-protect-trunk
         language: system
         always_run: true
         pass_filenames: false
       - id: protect-trunk-push
         name: no pushes advancing a protected remote ref
-        entry: guardrails-protect-trunk-push
+        entry: guardrails-trace protect-trunk-push -- guardrails-protect-trunk-push
         language: system
         stages: [pre-push]
         always_run: true
         pass_filenames: false
       - id: no-fake-impl
         name: no fake/placeholder implementations
-        entry: guardrails-no-fake-impl
+        entry: guardrails-trace no-fake-impl -- guardrails-no-fake-impl
         language: system
         pass_filenames: true
       - id: no-debug-leftovers
         name: no debug-print leftovers (use the tracing facade)
-        entry: guardrails-no-debug-leftovers
+        entry: guardrails-trace no-debug-leftovers -- guardrails-no-debug-leftovers
         language: system
         pass_filenames: true
       - id: no-commented-code
         name: no commented-out code
-        entry: guardrails-no-commented-code
+        entry: guardrails-trace no-commented-code -- guardrails-no-commented-code
         language: system
         pass_filenames: true
       - id: derived-docs
         name: derived docs match their source-of-truth command
-        entry: guardrails-derived-docs
+        entry: guardrails-trace derived-docs -- guardrails-derived-docs
         language: system
         pass_filenames: true
       - id: no-conflict-markers
         name: no committed merge-conflict markers
-        entry: guardrails-no-conflict-markers
+        entry: guardrails-trace no-conflict-markers -- guardrails-no-conflict-markers
         language: system
         pass_filenames: true
       - id: ci-shim
         name: CI is a shim over `nix flake check` (nudge)
-        entry: guardrails-ci-shim
+        entry: guardrails-trace ci-shim -- guardrails-ci-shim
         language: system
         files: ^\.github/workflows/.*\.ya?ml$
         pass_filenames: true
       - id: duplication
         name: no reinvented clones (nudge)
-        entry: guardrails-duplication
+        entry: guardrails-trace duplication -- guardrails-duplication
         language: system
         # Cross-file by nature: scans the whole tree (not just staged files),
         # but only fires when a source file changed. Nudge — never blocks.
@@ -62,24 +67,24 @@ repos:
         pass_filenames: false
       - id: gitleaks
         name: secrets scan
-        entry: gitleaks protect --staged --redact -v
+        entry: guardrails-trace gitleaks -- gitleaks protect --staged --redact -v
         language: system
         pass_filenames: false
       - id: rustfmt
         name: rustfmt
-        entry: cargo fmt --all -- --check
+        entry: guardrails-trace rustfmt -- cargo fmt --all -- --check
         language: system
         files: \.rs$
         pass_filenames: false
       - id: clippy
         name: clippy (-D warnings)
-        entry: cargo clippy --all-targets --all-features -- -D warnings
+        entry: guardrails-trace clippy -- cargo clippy --all-targets --all-features -- -D warnings
         language: system
         files: \.rs$
         pass_filenames: false
       - id: cargo-deny
         name: cargo-deny (licenses + advisories)
-        entry: cargo deny check
+        entry: guardrails-trace cargo-deny -- cargo deny check
         language: system
         files: Cargo\.(toml|lock)$
         pass_filenames: false
