@@ -817,7 +817,7 @@ ptp_assert() { # desc, want-exit, env-assignments..., --, stdin-lines...
   local envs=()
   while [ "$1" != "--" ]; do envs+=("$1"); shift; done
   shift
-  printf '%s\n' "$@" | env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES -u PRE_COMMIT_REMOTE_BRANCH "${envs[@]}" "$ptp_gate" >/dev/null 2>&1
+  printf '%s\n' "$@" | env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES -u PRE_COMMIT_REMOTE_BRANCH -u GUARDRAILS_TRUNK_MERGE_GATE -u GUARDRAILS_TRUNK_MERGE_CMD "${envs[@]}" "$ptp_gate" >/dev/null 2>&1
   local got=$?
   if [ "$got" = "$want" ]; then echo "ok    — protect-trunk-push: $desc"
   else echo "FAIL  — protect-trunk-push: $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
@@ -839,6 +839,19 @@ ptp_assert "env fallback blocks protected ref (prek)" 1 PRE_COMMIT_REMOTE_BRANCH
 ptp_assert "env fallback passes feature ref (prek)"   0 PRE_COMMIT_REMOTE_BRANCH=refs/heads/feat/x -- ""
 ptp_assert "stdin takes precedence over env fallback" 0 PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- "refs/heads/feat/x $sha_a refs/heads/feat/x $sha_a"
 ptp_assert "env fallback honors empty-knob opt-out"   0 GUARDRAILS_PROTECTED_BRANCHES= PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- ""
+# Trunk-merge-gate (issue #18): GUARDRAILS_TRUNK_MERGE_GATE=1 turns the refusal into
+# "pass iff the check suite is green right now" — pre-push earns the trunk advance.
+ptp_assert "trunk-merge-gate: green guards EARN the push"  0 GUARDRAILS_TRUNK_MERGE_GATE=1 GUARDRAILS_TRUNK_MERGE_CMD=true -- "refs/heads/feat/x $sha_a refs/heads/main $sha_a"
+ptp_assert "trunk-merge-gate: red guards still refuse"     1 GUARDRAILS_TRUNK_MERGE_GATE=1 GUARDRAILS_TRUNK_MERGE_CMD=false -- "refs/heads/feat/x $sha_a refs/heads/main $sha_a"
+ptp_assert "trunk-merge-gate off by default (refusal)"     1 -- "refs/heads/feat/x $sha_a refs/heads/main $sha_a"
+# The check suite runs at most ONCE per push, however many protected refs match.
+tmg_cnt="$tmp/tmg-count"
+: > "$tmg_cnt"
+printf '#!/bin/sh\necho x >> "%s"\n' "$tmg_cnt" > "$tmp/tmg-cmd" && chmod +x "$tmp/tmg-cmd"
+printf '%s\n' "refs/heads/feat/x $sha_a refs/heads/main $sha_a" "refs/heads/feat/x $sha_a refs/heads/master $sha_a" \
+  | env -u CI -u GITHUB_ACTIONS GUARDRAILS_TRUNK_MERGE_GATE=1 GUARDRAILS_TRUNK_MERGE_CMD="$tmp/tmg-cmd" "$ptp_gate" >/dev/null 2>&1
+if [ "$(grep -c x "$tmg_cnt")" = 1 ]; then echo "ok    — protect-trunk-push: merge-gate cmd memoized (1 run for 2 refs)"
+else echo "FAIL  — protect-trunk-push: merge-gate cmd ran $(grep -c x "$tmg_cnt") times"; fails=$((fails + 1)); fi
 
 # --- nudge-ledger: the shared persistence-escalation harness (issue #32) -------
 # Gate-agnostic lifecycle: new → quiet · persisted → age-in-commits (+growth) →
