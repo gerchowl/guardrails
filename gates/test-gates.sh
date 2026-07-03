@@ -68,6 +68,23 @@ else echo "FAIL  — output glob missed dir-walked ./-prefixed path"; fails=$((f
 printf 'fn f() -> u32 { 1 + 1 }\n' > "$tmp/src/clean.rs"
 assert "clean code passes" 0 -- "$tmp/src/clean.rs"
 
+# --- batching regression guards (one grep per file-type, not per file) --------
+# Attribution across a multi-file batch must stay correct, and paths with spaces
+# must survive (a naive unquoted batch breaks both). Green before and after the
+# fork-storm refactor — they guard it.
+mkdir -p "$tmp/nd_multi"
+printf 'fn a() -> u32 { 1 }\n'          > "$tmp/nd_multi/a.rs"   # clean
+printf 'fn b() { println!("x"); }\n'    > "$tmp/nd_multi/b.rs"   # leak
+nd_out="$("$debug_gate" "$tmp/nd_multi" 2>/dev/null)"
+if printf '%s' "$nd_out" | grep -q 'b\.rs' && ! printf '%s' "$nd_out" | grep -q 'a\.rs'; then
+  echo "ok    — batched scan attributes the hit to the right file"
+else echo "FAIL  — batched scan mis-attributes across files"; fails=$((fails + 1)); fi
+mkdir -p "$tmp/nd_space"
+printf 'fn b() { println!("x"); }\n' > "$tmp/nd_space/weird name.rs"
+( "$debug_gate" "$tmp/nd_space" >/dev/null 2>&1 )
+if [ $? = 1 ]; then echo "ok    — filename with a space is still scanned"
+else echo "FAIL  — filename with a space slips the batched scan"; fails=$((fails + 1)); fi
+
 # --- no-fake-impl: stub markers flagged, vocabulary/strings are not ----------
 fake_gate="$here/no-fake-impl.sh"
 fake_assert() { # desc, want-exit, file-content
