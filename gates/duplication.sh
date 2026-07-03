@@ -208,6 +208,9 @@ fi
 # Lifecycle (first-seen stamping, age-in-commits, growth, promotion, ledger reconcile)
 # lives in the shared nudge-ledger harness (issue #32); this gate keeps detection and
 # vocabulary only. Findings: key=clone-hash, count=nsites, label=span|nsites|sites.
+# Fail-open by design: if the harness dies mid-check (its exit is discarded by the process
+# substitution below) the nudge still fires from `hits`, just without per-clone tiers —
+# degraded and visible, never a false block.
 nl_bin="$(command -v guardrails-nudge-ledger || true)"
 [ -n "$nl_bin" ] || nl_bin="$(cd "$(dirname "$0")" && pwd)/../tools/nudge-ledger.sh"
 
