@@ -46,6 +46,7 @@ if [ "${1:-}" = "--record" ]; then record=1; shift; fi
 roots=("${@:-.}")
 enforce="${GUARDRAILS_DUP_ENFORCE:-}"
 enforce_age="${GUARDRAILS_DUP_ENFORCE_AGE:-0}"
+case "$enforce_age" in ''|*[!0-9]*) enforce_age=0 ;; esac # garbage knob → escalation off, not a bash error
 ledger="${GUARDRAILS_DUP_LEDGER:-.guardrails/dup-ledger.tsv}"
 allow="${GUARDRAILS_DUP_ALLOW:-}"
 min_lines="${GUARDRAILS_DUP_MIN_LINES:-6}"
@@ -204,52 +205,48 @@ PY
 )"
 fi
 
-# Load the ledger: canonical_hash -> first_seen_commit, prior sites.
-declare -A led_first led_sites
-if [ -f "$ledger" ]; then
-  while IFS="$TAB" read -r h fseen s _; do
-    [ -n "$h" ] || continue
-    led_first["$h"]="$fseen"; led_sites["$h"]="$s"
-  done < "$ledger"
-fi
-head_sha="$(git rev-parse HEAD 2>/dev/null || true)"
+# Lifecycle (first-seen stamping, age-in-commits, growth, promotion, ledger reconcile)
+# lives in the shared nudge-ledger harness (issue #32); this gate keeps detection and
+# vocabulary only. Findings: key=clone-hash, count=nsites, label=span|nsites|sites.
+# Fail-open by design: if the harness dies mid-check (its exit is discarded by the process
+# substitution below) the nudge still fires from `hits`, just without per-clone tiers —
+# degraded and visible, never a false block.
+nl_bin="$(command -v guardrails-nudge-ledger || true)"
+[ -n "$nl_bin" ] || nl_bin="$(cd "$(dirname "$0")" && pwd)/../tools/nudge-ledger.sh"
 
-report=""; new_ledger=""; hits=0; promoted=0
+findings=""; hits=0
 while IFS="$TAB" read -r tag h nsites span labels; do
   [ "$tag" = GROUP ] || continue
   hits=$((hits + 1))
-  sites_disp="${labels//|/, }"
-  first="${led_first[$h]:-}"
-  if [ -n "$first" ]; then
-    age="$(git rev-list --count "$first..HEAD" 2>/dev/null || echo 0)"
-    prev="${led_sites[$h]:-$nsites}"
-    grew=""
-    [ "$nsites" -gt "$prev" ] 2>/dev/null && grew=" grew ${prev}→${nsites} sites"
-    if [ "$enforce_age" -gt 0 ] && [ "$age" -ge "$enforce_age" ] 2>/dev/null; then
-      tier="(persisted ${age} commits${grew} → PROMOTED to block)"
-      promoted=$((promoted + 1))
-    elif [ -n "$grew" ]; then
-      tier="(persisted ${age} commits${grew}) ⚠"
-    else
-      tier="(persisted ${age} commits)"
-    fi
-    stamp="$first"
-  else
-    tier="(new)"
-    stamp="$head_sha"
-  fi
-  report+="  dup: ~${span} significant lines cloned across ${nsites} sites ${tier}: ${sites_disp}"$'\n'
-  new_ledger+="${h}${TAB}${stamp}${TAB}${nsites}${TAB}${span}"$'\n'
+  findings+="${h}${TAB}${nsites}${TAB}${span}${TAB}${nsites}${TAB}${labels}"$'\n'
 done <<< "$groups_raw"
 
-# --record: reconcile the ledger to disk. Persisting groups keep their first-seen
-# commit; new groups are stamped at HEAD; vanished (resolved) groups are dropped
-# → the ledger can only shrink unless real drift appears. Sorted = clean diff.
+# --record: the harness reconciles the ledger (persisting keys keep first-seen, new keys
+# stamp at HEAD, resolved keys drop → only shrinks unless real drift appears; sorted).
 if [ -n "$record" ]; then
-  mkdir -p "$(dirname "$ledger")"
-  printf '%s' "$new_ledger" | LC_ALL=C sort > "$ledger"
+  printf '%s' "$findings" | "$nl_bin" record --ledger "$ledger"
   exit 0
 fi
+
+report=""; promoted=0
+while IFS="$TAB" read -r h tier span nsites labels; do
+  [ -n "$h" ] || continue
+  sites_disp="${labels//|/, }"
+  case "$tier" in
+    new) t="(new)" ;;
+    promoted:*)
+      rest="${tier#promoted:}"; age="${rest%%:*}"
+      grew=""; case "$rest" in *:grew:*) g="${rest##*:grew:}"; grew=" grew ${g%>*}→${g#*>} sites" ;; esac
+      t="(persisted ${age} commits${grew} → PROMOTED to block)"
+      promoted=$((promoted + 1)) ;;
+    persisted:*:grew:*)
+      rest="${tier#persisted:}"; age="${rest%%:*}"; g="${rest##*:grew:}"
+      t="(persisted ${age} commits grew ${g%>*}→${g#*>} sites) ⚠" ;;
+    persisted:*) t="(persisted ${tier#persisted:} commits)" ;;
+    *) t="($tier)" ;;
+  esac
+  report+="  dup: ~${span} significant lines cloned across ${nsites} sites ${t}: ${sites_disp}"$'\n'
+done < <(printf '%s' "$findings" | "$nl_bin" check --ledger "$ledger" --enforce-age "$enforce_age")
 
 [ "$hits" -gt 0 ] || exit 0
 printf '%s' "$report"

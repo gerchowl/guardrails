@@ -37,6 +37,7 @@
           install -m755 ${./tools/trace.sh} $out/bin/guardrails-trace
           install -m755 ${./tools/trace-report.sh} $out/bin/guardrails-trace-report
           install -m755 ${./tools/diffpack.sh} $out/bin/guardrails-diffpack
+          install -m755 ${./tools/nudge-ledger.sh} $out/bin/guardrails-nudge-ledger
           patchShebangs $out/bin   # see gates above — sandbox has no /usr/bin/env
         '';
 
