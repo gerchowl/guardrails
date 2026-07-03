@@ -84,6 +84,26 @@ printf 'fn b() { println!("x"); }\n' > "$tmp/nd_space/weird name.rs"
 ( "$debug_gate" "$tmp/nd_space" >/dev/null 2>&1 )
 if [ $? = 1 ]; then echo "ok    — filename with a space is still scanned"
 else echo "FAIL  — filename with a space slips the batched scan"; fails=$((fails + 1)); fi
+# The guardrails-ok escape is per-LINE-CONTENT; a path containing the substring
+# must not suppress findings under it (the joined file:line:content filter bug).
+mkdir -p "$tmp/nd_okpath/guardrails-ok-examples"
+printf 'fn b() { println!("x"); }\n' > "$tmp/nd_okpath/guardrails-ok-examples/leak.rs"
+( "$debug_gate" "$tmp/nd_okpath" >/dev/null 2>&1 )
+if [ $? = 1 ]; then echo "ok    — guardrails-ok in a PATH does not suppress findings"
+else echo "FAIL  — guardrails-ok path suppresses real findings"; fails=$((fails + 1)); fi
+# …while the line-content escape still works through the batched path.
+printf 'fn c() { println!("x"); } // guardrails-ok\n' > "$tmp/nd_okpath/guardrails-ok-examples/ok.rs"
+( "$debug_gate" "$tmp/nd_okpath/guardrails-ok-examples/ok.rs" >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — guardrails-ok line escape survives batching"
+else echo "FAIL  — guardrails-ok line escape broken in batched scan"; fails=$((fails + 1)); fi
+# Mixed rust+web batch: both pattern families detect through the batched path.
+mkdir -p "$tmp/nd_mixed"
+printf 'fn b() { println!("x"); }\n'  > "$tmp/nd_mixed/leak.rs"
+printf 'console.log("x");\n'          > "$tmp/nd_mixed/leak.ts"
+nd_mixed_out="$("$debug_gate" "$tmp/nd_mixed" 2>/dev/null)"
+if printf '%s' "$nd_mixed_out" | grep -q 'leak\.rs' && printf '%s' "$nd_mixed_out" | grep -q 'leak\.ts'; then
+  echo "ok    — mixed rust+web batch detects both families"
+else echo "FAIL  — mixed rust+web batch misses a family"; fails=$((fails + 1)); fi
 
 # --- no-fake-impl: stub markers flagged, vocabulary/strings are not ----------
 fake_gate="$here/no-fake-impl.sh"
