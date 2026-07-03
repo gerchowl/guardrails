@@ -19,7 +19,10 @@ GATES — block a commit unless escaped:
   no-fake-impl        todo!()/unimplemented!()/FIXME/placeholder-impl — stubs shipped as "done"
   no-debug-leftovers  dbg!/print!/println!/eprint!/eprintln!/console.log outside main/bin/tests
   no-commented-code   commented-out code graveyards
-  no-hardcoded        magic values that should be tunables (src/ only)
+  no-hardcoded        magic values that should be tunables (src/ only). Adopting on a legacy
+                      tree? Ratchet mode: `guardrails-no-hardcoded --record-baseline` commits a
+                      per-file debt snapshot — growth hard-fails, burn-down nudges a re-record,
+                      at-baseline stays silent (no big-bang triage needed)
   no-conflict-markers committed <<<<<<</=======/>>>>>>> merge-marker lines (no escape — never legitimate)
   no-raw-trace-fields raw ?/% Debug/Display field formatters in tracing! macros — shape the field
                       in your schema surface (PII/secrets leak into logs by reflex otherwise)
@@ -51,6 +54,9 @@ CONFIG KNOBS (in your repo root):
   GUARDRAILS_TRACE_ALLOW_GLOBS  no-raw-trace-fields: colon-sep path globs for the schema/redaction
                            surface where raw ?/% field formatting is defined, e.g. src/trace_schema.rs
   guardrails-allow.txt     no-hardcoded: blessed path prefixes to skip
+  guardrails-baseline.txt  no-hardcoded ratchet: committed per-file count snapshot (or point
+                           GUARDRAILS_HARDCODED_BASELINE elsewhere); --record-baseline refuses
+                           to loosen — the ratchet only tightens
   GUARDRAILS_ENV_PREFIXES  no-hardcoded: colon-sep env-var name prefixes to flag as bare string
                            literals (write the shared const instead), e.g. "MYAPP_:OTHER_"
   perf-budgets.toml        perf-budget: criterion median ceilings (run after `cargo criterion`)
