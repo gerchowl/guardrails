@@ -103,6 +103,28 @@ ADRs and typo fixes stay quiet. Two conventions keep that integrity honest:
   the matrix reflects exactly one truth per feature. (The `adr-matrix` gate does **not** check
   co-Accept contradictions — humans do, at flip time.)
 
+## Fresh-eyes review — author ≠ reviewer, refutation framing
+
+Authors are **confirmation-blind to their own regressions** (observed repeatedly: a retired
+concept re-introduced by its own retirer; two implementations of one written spec drifting within
+hours; a self-written test exposing the author's just-written bug). The countermeasure is cheap
+and procedural:
+
+- **Every landing diff gets a fresh-context pass before merge** — an agent or human who did NOT
+  write it, seeded with *refutation framing* ("try to refute that this works"), never "summarize
+  this change". A reviewer told to refute reads the escape hatches and gate-config deltas first;
+  a reviewer told to look reads the prose and nods.
+- **`guardrails diffpack`** emits the full review surface as one artifact: added escape hatches
+  and gate-config deltas up top (each is the author requesting an exemption — review those FIRST),
+  ADR references in changed hunks (check code against the *decided* design), derived-region edits,
+  then the diff, prefixed with the reviewer contract. Pipe it to the fresh context; no other
+  setup needed.
+- **Cross-impl parity vectors.** When two codebases mirror one contract (protocol types, schema,
+  wire format), prose specs WILL drift — within hours, silently. Commit **golden vectors**
+  (canonical request/response fixtures, JSON) that BOTH sides must round-trip in their own test
+  suites; the fixtures are the contract, the prose is commentary. Same shape as docs-as-tests:
+  retire the hand-maintained agreement surface for one the machine verifies.
+
 ## Logging / tracing — one spine, four payoffs
 
 Use **`tracing` + `tracing-subscriber` (`EnvFilter`)**, structured fields. The same spine serves
