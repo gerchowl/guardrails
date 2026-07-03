@@ -840,6 +840,55 @@ ptp_assert "env fallback passes feature ref (prek)"   0 PRE_COMMIT_REMOTE_BRANCH
 ptp_assert "stdin takes precedence over env fallback" 0 PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- "refs/heads/feat/x $sha_a refs/heads/feat/x $sha_a"
 ptp_assert "env fallback honors empty-knob opt-out"   0 GUARDRAILS_PROTECTED_BRANCHES= PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- ""
 
+# --- guardrails-trace: duration+verdict JSONL wrapper (issue #14) --------------
+# Transparent wrapper: exit code + streams pass through; one atomic row per run in
+# the XDG cache; guardrails last replays the latest run and cannot be swallowed.
+trace="$here/../tools/trace.sh"
+report="$here/../tools/trace-report.sh"
+tdir="$tmp/trace-repo"; mkdir -p "$tdir"
+tr_env() { ( cd "$tdir" && env XDG_CACHE_HOME="$tmp/xdg" "$@" ); }
+tr_check() { # desc, want, got
+  if [ "$3" = "$2" ]; then echo "ok    — trace: $1"
+  else echo "FAIL  — trace: $1 (want $2, got $3)"; fails=$((fails + 1)); fi
+}
+tr_out="$(tr_env env GR_RUN_ID=run1 GR_TRIGGER=pre-commit "$trace" echo-gate -- echo hello)"
+tr_check "wrapped command's stdout passes through" hello "$tr_out"
+tr_env env GR_RUN_ID=run1 GR_TRIGGER=pre-commit "$trace" fail-gate -- sh -c 'exit 3' >/dev/null 2>&1
+tr_check "wrapped exit code is preserved" 3 $?
+tfile="$(ls "$tmp"/xdg/guardrails/runs/*.jsonl 2>/dev/null | head -1)"
+if [ -n "$tfile" ] && [ "$(grep -c . "$tfile")" = 2 ]; then echo "ok    — trace: one row per run appended"
+else echo "FAIL  — trace: expected 2 rows in $tfile"; fails=$((fails + 1)); fi
+if grep -q '"gate":"echo-gate","trigger":"pre-commit","verdict":"pass","exit_code":0' "$tfile" \
+   && grep -q '"gate":"fail-gate","trigger":"pre-commit","verdict":"fail","exit_code":3' "$tfile"; then
+  echo "ok    — trace: rows carry verdict enum + raw exit code"
+else echo "FAIL  — trace: row fields wrong: $(cat "$tfile")"; fails=$((fails + 1)); fi
+if awk '!/"duration_ms":[0-9]+/ { bad = 1 } END { exit bad }' "$tfile"; then
+  echo "ok    — trace: duration_ms is a non-negative integer"
+else echo "FAIL  — trace: bad duration_ms"; fails=$((fails + 1)); fi
+# guardrails last: latest run only, FAIL duplicated to stderr, exit 1.
+tr_env env GR_RUN_ID=run2 GR_TRIGGER=pre-push "$trace" ok-gate -- true >/dev/null 2>&1
+last_err="$(tr_env "$report" last 2>&1 >/dev/null)"; last_ec=$?
+tr_check "last exits 0 when the latest run is green" 0 $last_ec
+tr_env env GR_RUN_ID=run3 GR_TRIGGER=pre-commit "$trace" bad-gate -- false >/dev/null 2>&1
+last_out="$(tr_env "$report" last 2>/dev/null)"; last_ec=$?
+last_err="$(tr_env "$report" last 2>&1 >/dev/null)"
+tr_check "last exits 1 when the latest run has a FAIL" 1 $last_ec
+if printf '%s' "$last_err" | grep -q FAIL; then echo "ok    — trace: FAIL is duplicated on stderr (unswallowable)"
+else echo "FAIL  — trace: FAIL not on stderr"; fails=$((fails + 1)); fi
+if printf '%s' "$last_out" | grep -q run3 && ! printf '%s' "$last_out" | grep -q ok-gate; then
+  echo "ok    — trace: last shows only the latest run"
+else echo "FAIL  — trace: last mixed runs: $last_out"; fails=$((fails + 1)); fi
+# perf report aggregates without error and names the gates.
+perf_out="$(tr_env "$report" perf 2>&1)"
+if printf '%s' "$perf_out" | grep -q 'echo-gate' && printf '%s' "$perf_out" | grep -q 'p95'; then
+  echo "ok    — trace: perf report aggregates per gate"
+else echo "FAIL  — trace: perf report broken: $perf_out"; fails=$((fails + 1)); fi
+# outside any tracing (no GR_* env): still writes a row with trigger=manual.
+tr_env "$trace" manual-gate -- true >/dev/null 2>&1
+if grep -q '"gate":"manual-gate","trigger":"manual"' "$tfile"; then
+  echo "ok    — trace: bare invocation defaults to trigger=manual"
+else echo "FAIL  — trace: manual trigger default missing"; fails=$((fails + 1)); fi
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2
