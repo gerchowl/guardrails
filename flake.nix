@@ -35,6 +35,7 @@
           install -m755 ${./tools/freshness-refresh.sh} $out/bin/guardrails-freshness-refresh
           install -m755 ${./tools/freshness-nudge.sh} $out/bin/guardrails-freshness-nudge
           install -m755 ${./tools/diffpack.sh} $out/bin/guardrails-diffpack
+          install -m755 ${./tools/nudge-ledger.sh} $out/bin/guardrails-nudge-ledger
           patchShebangs $out/bin   # see gates above — sandbox has no /usr/bin/env
         '';
 
