@@ -147,6 +147,7 @@ if [ "$record" = 1 ]; then
       echo "guardrails/no-hardcoded: refusing --record-baseline — count(s) grew past the committed baseline:" >&2
       printf '%s\n' "$regress" >&2
       echo "  Fix the new bare values (wrap in const_tunable!/config!), then re-record." >&2
+      echo "  Renamed a file with known debt? The ratchet compares by path — move its row in $baseline to the new path, then re-record." >&2
       exit 1
     fi
   fi
