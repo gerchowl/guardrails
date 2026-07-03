@@ -394,6 +394,120 @@ printf 'fn f() { info!(user = ?user); }\n' > "$tmp/tests/trace_leak.rs"
 if [ $? = 0 ]; then echo "ok    — no-raw-trace-fields excludes top-level tests/ (relative)"
 else echo "FAIL  — no-raw-trace-fields flags top-level tests/ (relative)"; fails=$((fails + 1)); fi
 
+# --- duplication: token-window clone nudge -----------------------------------
+# Reinvention-vs-reuse detector. Multi-file by nature, so it runs on a DIR root
+# (not a single file). Default = NUDGE (report, exit 0); GUARDRAILS_DUP_ENFORCE=1
+# promotes to a hard gate. Precision-first: an exact ≥K normalized-line match is
+# a real clone, so false positives stay near zero (a noisy nudge trains bypass).
+dup_gate="$here/duplication.sh"
+# dup_assert <desc> <want-exit> <env...> -- <dir>
+dup_assert() {
+  local desc="$1" want="$2"; shift 2
+  local env=()
+  while [ "$1" != "--" ]; do env+=("$1"); shift; done
+  shift
+  env "${env[@]}" "$dup_gate" "$1" >/dev/null 2>&1
+  local got=$?
+  if [ "$got" = "$want" ]; then echo "ok    — $desc"
+  else echo "FAIL  — $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
+}
+
+# A ≥6 significant-line block (the class of hand-rolled modal/confirm handler
+# that drifts into N near-identical copies).
+dup_block() { cat <<'RS'
+fn handle_close(state: &mut State) {
+    state.dialog = None;
+    state.mode = if state.active.is_some() {
+        Mode::Terminal
+    } else {
+        Mode::Navigate
+    };
+    state.dirty = true;
+}
+RS
+}
+
+# CAUGHT: same block in two files, differing only in indentation + comments
+# (normalization must see through whitespace/comment noise).
+mkdir -p "$tmp/dup_clone"
+dup_block > "$tmp/dup_clone/a.rs"
+{ echo "// an unrelated leading comment"; dup_block | sed 's/^/    /'; echo "    // trailing note"; } > "$tmp/dup_clone/b.rs"
+dup_assert "clone across two files is a NUDGE (exit 0)"          0 -- "$tmp/dup_clone"
+dup_assert "clone promoted to hard gate under ENFORCE"          1 "GUARDRAILS_DUP_ENFORCE=1" -- "$tmp/dup_clone"
+
+# NO FALSE POSITIVE: two genuinely distinct files.
+mkdir -p "$tmp/dup_unique"
+printf 'fn alpha() {\n    let x = compute_alpha();\n    x + 1\n}\n' > "$tmp/dup_unique/a.rs"
+printf 'fn beta() {\n    let y = compute_beta();\n    y * 2\n}\n'    > "$tmp/dup_unique/b.rs"
+dup_assert "distinct files produce no clone"                    0 "GUARDRAILS_DUP_ENFORCE=1" -- "$tmp/dup_unique"
+
+# THRESHOLD: an identical block of only 5 significant lines (< K=6) is ignored.
+mkdir -p "$tmp/dup_short"
+short_block() { cat <<'RS'
+fn s() {
+    let a = one();
+    let b = two();
+    let c = three();
+    let d = four();
+}
+RS
+}
+short_block > "$tmp/dup_short/a.rs"; short_block > "$tmp/dup_short/b.rs"
+dup_assert "shared block below the ≥6-line threshold is ignored" 0 "GUARDRAILS_DUP_ENFORCE=1" -- "$tmp/dup_short"
+
+# ESCAPE: guardrails-ok on one twin removes it from the corpus → no pair.
+mkdir -p "$tmp/dup_ok"
+dup_block > "$tmp/dup_ok/a.rs"
+{ echo "// guardrails-ok"; dup_block; } > "$tmp/dup_ok/b.rs"
+dup_assert "guardrails-ok on one twin suppresses the pair"      0 "GUARDRAILS_DUP_ENFORCE=1" -- "$tmp/dup_ok"
+
+# ESCAPE: GUARDRAILS_DUP_ALLOW glob excludes a twin the same way.
+dup_assert "GUARDRAILS_DUP_ALLOW glob excludes a twin"         0 "GUARDRAILS_DUP_ENFORCE=1" "GUARDRAILS_DUP_ALLOW=*/b.rs" -- "$tmp/dup_clone"
+
+# TUNABLE: dropping the threshold to 5 makes the short block fire.
+dup_assert "GUARDRAILS_DUP_MIN_LINES=5 catches the 5-line block" 1 "GUARDRAILS_DUP_ENFORCE=1" "GUARDRAILS_DUP_MIN_LINES=5" -- "$tmp/dup_short"
+
+# DETERMINISM: guardrails bans wall-clock/random for reproducibility — identical
+# input must yield byte-identical output across runs.
+r1="$(GUARDRAILS_DUP_ENFORCE=1 "$dup_gate" "$tmp/dup_clone" 2>&1)"
+r2="$(GUARDRAILS_DUP_ENFORCE=1 "$dup_gate" "$tmp/dup_clone" 2>&1)"
+if [ "$r1" = "$r2" ]; then echo "ok    — duplication report is deterministic"
+else echo "FAIL  — duplication report differs across runs"; fails=$((fails + 1)); fi
+
+# --- duplication: staleness escalation (ledger + git-age → auto-promote) ------
+# The nudge earns the right to become a gate: a clone that PERSISTS undealt-with
+# across commits has a decaying false-positive probability, so age promotes it
+# nudge → hard block. Ledger is committed state (like perf-history.csv); age is
+# counted in COMMITS (git as the deterministic clock — no wall-time).
+led="$tmp/dup_ledger.tsv"
+aged="$tmp/dup_aged"
+mkdir -p "$aged"
+dup_block > "$aged/a.rs"
+dup_block > "$aged/b.rs"
+git -C "$aged" init -q
+git -C "$aged" config user.email t@t; git -C "$aged" config user.name t
+git -C "$aged" add -A && git -C "$aged" commit -q -m c1
+# --record stamps the clone group's first-seen at HEAD (c1) into the ledger.
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" "$dup_gate" --record "$aged" >/dev/null 2>&1 )
+if [ -s "$led" ]; then echo "ok    — --record writes the clone ledger"
+else echo "FAIL  — --record did not write a ledger"; fails=$((fails + 1)); fi
+# One more commit → the clone has persisted 1 commit since first-seen.
+: > "$aged/other.txt"; git -C "$aged" add -A && git -C "$aged" commit -q -m c2
+# age(1) ≥ ENFORCE_AGE(1) → persisted clone auto-promotes to a hard block…
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" GUARDRAILS_DUP_ENFORCE_AGE=1 "$dup_gate" "$aged" >/dev/null 2>&1 )
+if [ $? = 1 ]; then echo "ok    — persisted clone auto-promotes to ENFORCE by age"
+else echo "FAIL  — persisted clone did not auto-promote"; fails=$((fails + 1)); fi
+# …but a threshold it has not reached keeps it a nudge (exit 0).
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" GUARDRAILS_DUP_ENFORCE_AGE=99 "$dup_gate" "$aged" >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — clone below the age threshold stays a nudge"
+else echo "FAIL  — clone below age threshold wrongly blocked"; fails=$((fails + 1)); fi
+# Resolving it (decorate one twin) drops it from the ledger on the next --record.
+{ echo "// guardrails-ok"; dup_block; } > "$aged/b.rs"
+git -C "$aged" add -A && git -C "$aged" commit -q -m c3
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" "$dup_gate" --record "$aged" >/dev/null 2>&1 )
+if [ ! -s "$led" ]; then echo "ok    — resolved clone drops from the ledger (ratchet-shrink)"
+else echo "FAIL  — resolved clone lingers in the ledger"; fails=$((fails + 1)); fi
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2

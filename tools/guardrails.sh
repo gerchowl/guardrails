@@ -22,6 +22,11 @@ GATES — block a commit unless escaped:
   derived-docs        regions marked `<!-- guardrails:derived cmd="…" -->` must match `cmd`'s output
                       (re-run with --fix to regenerate; commands run with repo-hook trust)
   + gitleaks · rustfmt · clippy -D warnings · cargo-deny
+
+NUDGES — warn (exit 0); promote per-repo with the gate's *_ENFORCE knob:
+  ci-shim             a CI workflow runs logic but no `nix flake check` (GUARDRAILS_CI_SHIM_ENFORCE)
+  duplication         a ≥6-line block cloned across ≥2 sites — reinvention vs reuse; extract a
+                      helper (GUARDRAILS_DUP_ENFORCE / _MIN_LINES / _EXTS / _ALLOW)
 CI-deep (not pre-commit) — run after `cargo criterion`:
   perf-budget         gate criterion regressions over a checked-in perf-budgets.toml
   perf-record         append per-bench medians to perf-history.csv — the PR diff is the report,

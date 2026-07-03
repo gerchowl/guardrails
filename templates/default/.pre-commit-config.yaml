@@ -35,6 +35,14 @@ repos:
         language: system
         files: ^\.github/workflows/.*\.ya?ml$
         pass_filenames: true
+      - id: duplication
+        name: no reinvented clones (nudge)
+        entry: guardrails-duplication
+        language: system
+        # Cross-file by nature: scans the whole tree (not just staged files),
+        # but only fires when a source file changed. Nudge — never blocks.
+        files: \.(rs|go|py|ts|tsx|js|jsx|c|h|cc|cpp|hpp|java|rb|sh|nix)$
+        pass_filenames: false
       - id: gitleaks
         name: secrets scan
         entry: gitleaks protect --staged --redact -v
