@@ -12,6 +12,10 @@ guardrails — shareable code-quality / governance for this repo.
 Gates run on every commit (via prek); deep checks (cargo-deny, perf) run in CI.
 
 GATES — block a commit unless escaped:
+  protect-trunk       HEAD is a protected branch (main/master) — trunk advances by merge/PR only;
+                      the pre-push twin refuses pushes advancing a protected REMOTE ref
+                      (GUARDRAILS_PROTECTED_BRANCHES to change/disable · GUARDRAILS_ALLOW_TRUNK=1
+                      for an intentional hotfix · CI auto-allowed)
   no-fake-impl        todo!()/unimplemented!()/FIXME/placeholder-impl — stubs shipped as "done"
   no-debug-leftovers  dbg!/print!/println!/eprint!/eprintln!/console.log outside main/bin/tests
   no-commented-code   commented-out code graveyards

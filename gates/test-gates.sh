@@ -698,6 +698,97 @@ git -C "$aged" add -A && git -C "$aged" commit -q -m c3
 if [ ! -s "$led" ]; then echo "ok    — resolved clone drops from the ledger (ratchet-shrink)"
 else echo "FAIL  — resolved clone lingers in the ledger"; fails=$((fails + 1)); fi
 
+# --- protect-trunk: refuse direct commits on a protected branch ----------------
+# Workflow gate, not a content gate: HEAD's branch (or the branch a rebase is
+# rewriting) must not be in the protected set. CI / GITHUB_ACTIONS are cleared in
+# every row so the suite behaves identically locally and in CI (which sets them).
+pt_gate="$here/protect-trunk.sh"
+ptr="$tmp/pt-repo"
+git init -q -b main "$ptr" && git -C "$ptr" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+pt_assert() { # desc, want-exit, env-assignments..., -- (runs gate inside $ptr)
+  local desc="$1" want="$2"; shift 2
+  local envs=()
+  while [ "$1" != "--" ]; do envs+=("$1"); shift; done
+  ( cd "$ptr" && env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES "${envs[@]}" "$pt_gate" >/dev/null 2>&1 )
+  local got=$?
+  if [ "$got" = "$want" ]; then echo "ok    — protect-trunk: $desc"
+  else echo "FAIL  — protect-trunk: $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
+}
+pt_assert "blocks a commit on main (default set)"       1 --
+git -C "$ptr" branch -m master
+pt_assert "blocks a commit on master (default set)"     1 --
+git -C "$ptr" switch -q -c feat/x
+pt_assert "feature branch passes"                        0 --
+git -C "$ptr" checkout -q --detach
+pt_assert "detached HEAD is allowed"                     0 --
+# Rebase-of-protected probe: fake the rebase state files (a real `git rebase` of a
+# single-commit branch finishes atomically; the state file is what the gate reads).
+git_dir_pt="$(git -C "$ptr" rev-parse --git-dir)"; [ "${git_dir_pt#/}" = "$git_dir_pt" ] && git_dir_pt="$ptr/$git_dir_pt"
+mkdir -p "$git_dir_pt/rebase-merge" && echo "refs/heads/master" > "$git_dir_pt/rebase-merge/head-name"
+pt_assert "rebase OF a protected branch still blocks"    1 --
+rm -rf "$git_dir_pt/rebase-merge"
+git -C "$ptr" switch -q master
+pt_assert "GUARDRAILS_ALLOW_TRUNK=1 escape passes"       0 GUARDRAILS_ALLOW_TRUNK=1 --
+pt_assert "CI context auto-allows"                       0 CI=true --
+pt_assert "GITHUB_ACTIONS context auto-allows"           0 GITHUB_ACTIONS=true --
+pt_assert "knob REPLACES default (master not protected)" 0 GUARDRAILS_PROTECTED_BRANCHES='release/*' --
+pt_assert "empty knob disables protection"               0 GUARDRAILS_PROTECTED_BRANCHES= --
+# pt_on: switch AND verify — an invalid branch name must fail the row loudly, not
+# leave HEAD on the previous branch silently mis-testing (a review caught two such rows).
+pt_on() {
+  git -C "$ptr" switch -q -c "$1" 2>/dev/null
+  [ "$(git -C "$ptr" symbolic-ref --short HEAD)" = "$1" ] && return 0
+  echo "FAIL  — protect-trunk: could not create test branch '$1'"; fails=$((fails + 1)); return 1
+}
+pt_on release/1.2/hotfix && {
+pt_assert "glob knob matches nested release branch"      1 GUARDRAILS_PROTECTED_BRANCHES='release/*' --
+pt_assert "boundary empties in ':main:' don't match-all" 0 GUARDRAILS_PROTECTED_BRANCHES=':main:' --
+}
+# git refuses space/'['/'*' in ref names, so hostile-branch rows are unrepresentable;
+# glob semantics are exercised from the PATTERN side instead (? must match exactly one char).
+pt_on weirdo && {
+pt_assert "glob ? pattern matches one extra char"        1 GUARDRAILS_PROTECTED_BRANCHES='weird?' --
+pt_assert "glob ? pattern needs its char (no match)"     0 GUARDRAILS_PROTECTED_BRANCHES='weirdo?' --
+}
+mkdir -p "$tmp/pt-notrepo"
+( cd "$tmp/pt-notrepo" && env -u CI -u GITHUB_ACTIONS "$pt_gate" >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — protect-trunk: outside a git repo is allowed"
+else echo "FAIL  — protect-trunk: blocked outside a git repo"; fails=$((fails + 1)); fi
+
+# --- protect-trunk-push: refuse pushes advancing a protected REMOTE ref --------
+# Keyed on the remote ref from pre-push stdin (catches `push origin HEAD:main`
+# from a feature branch and cherry-picked/plumbing commits pre-commit never saw).
+ptp_gate="$here/protect-trunk-push.sh"
+sha_a=1111111111111111111111111111111111111111
+sha_z=0000000000000000000000000000000000000000
+ptp_assert() { # desc, want-exit, env-assignments..., --, stdin-lines...
+  local desc="$1" want="$2"; shift 2
+  local envs=()
+  while [ "$1" != "--" ]; do envs+=("$1"); shift; done
+  shift
+  printf '%s\n' "$@" | env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES -u PRE_COMMIT_REMOTE_BRANCH "${envs[@]}" "$ptp_gate" >/dev/null 2>&1
+  local got=$?
+  if [ "$got" = "$want" ]; then echo "ok    — protect-trunk-push: $desc"
+  else echo "FAIL  — protect-trunk-push: $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
+}
+ptp_assert "push to protected remote ref blocks"      1 -- "refs/heads/feat/x $sha_a refs/heads/main $sha_a"
+ptp_assert "HEAD:main refspec from feature blocks"    1 -- "HEAD $sha_a refs/heads/main $sha_a"
+ptp_assert "feature-to-feature push passes"           0 -- "refs/heads/feat/x $sha_a refs/heads/feat/x $sha_a"
+ptp_assert "deleting a remote branch is not blocked"  0 -- "(delete) $sha_z refs/heads/main $sha_a"
+ptp_assert "tag push to a 'main' tag is not a head"   0 -- "refs/tags/main $sha_a refs/tags/main $sha_a"
+ptp_assert "mixed batch: one protected ref blocks"    1 -- "refs/heads/feat/x $sha_a refs/heads/feat/x $sha_a" "refs/heads/feat/x $sha_a refs/heads/master $sha_a"
+ptp_assert "ALLOW_TRUNK escape passes"                0 GUARDRAILS_ALLOW_TRUNK=1 -- "refs/heads/feat/x $sha_a refs/heads/main $sha_a"
+ptp_assert "CI context auto-allows"                   0 CI=true -- "refs/heads/feat/x $sha_a refs/heads/main $sha_a"
+ptp_assert "knob glob protects release/* remote ref"  1 GUARDRAILS_PROTECTED_BRANCHES='release/*' -- "refs/heads/feat/x $sha_a refs/heads/release/1.2 $sha_a"
+ptp_assert "empty knob disables push protection"      0 GUARDRAILS_PROTECTED_BRANCHES= -- "refs/heads/feat/x $sha_a refs/heads/main $sha_a"
+ptp_assert "empty stdin (nothing to push) passes"     0 -- ""
+# prek/pre-commit run system hooks with stdin nulled and export the parsed remote ref
+# instead (PRE_COMMIT_REMOTE_BRANCH, full refs/heads/... form) — the env fallback path.
+ptp_assert "env fallback blocks protected ref (prek)" 1 PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- ""
+ptp_assert "env fallback passes feature ref (prek)"   0 PRE_COMMIT_REMOTE_BRANCH=refs/heads/feat/x -- ""
+ptp_assert "stdin takes precedence over env fallback" 0 PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- "refs/heads/feat/x $sha_a refs/heads/feat/x $sha_a"
+ptp_assert "env fallback honors empty-knob opt-out"   0 GUARDRAILS_PROTECTED_BRANCHES= PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- ""
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2
