@@ -128,16 +128,19 @@ def scan(f):
     for i in range(len(rows) - K + 1):
         text = "\n".join(rows[j][1] for j in range(i, i + K))
         win.append((i, hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()))
-    return f, rows, win
+    # Only line NUMBERS cross the pipe — the normalized text is dead weight once the
+    # windows are hashed here in the worker (pickle volume ≈ the whole corpus otherwise).
+    return f, [r[0] for r in rows], win
 
 
 # fork, not spawn: this script arrives on stdin, so spawn's __main__ re-import is impossible
 # (macOS default). Workers touch only hashlib/str — fork-safe. Small corpora skip the pool
 # (fork+IPC overhead beats the win under ~32 files). pool.map preserves order → deterministic.
 cpus = os.cpu_count() or 1
+workers = min(cpus, 8)
 if len(paths) >= 32 and cpus > 1 and "fork" in multiprocessing.get_all_start_methods():
-    with multiprocessing.get_context("fork").Pool(min(cpus, 8)) as pool:
-        results = pool.map(scan, paths, chunksize=max(1, len(paths) // (cpus * 4)))
+    with multiprocessing.get_context("fork").Pool(workers) as pool:
+        results = pool.map(scan, paths, chunksize=max(1, len(paths) // (workers * 4)))
 else:
     results = [scan(f) for f in paths]
 
@@ -212,7 +215,7 @@ for members in groups.values():
     if len(sites) < 2:
         continue
     span = max(e - s + 1 for _, s, e in sites)
-    labels = [f"{f}:{sig[f][s][0]}-{sig[f][e][0]}" for (f, s, e) in sites]
+    labels = [f"{f}:{sig[f][s]}-{sig[f][e]}" for (f, s, e) in sites]
     hs = set()
     for r in sites:
         hs |= region_hashes(r)
