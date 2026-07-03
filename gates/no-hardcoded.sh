@@ -19,13 +19,28 @@
 #     `guardrails-ok-begin` … `guardrails-ok-end` block (hardcode-ok-begin/-end work too), or
 #   - sits in the `#[cfg(test)]`-attributed item (module body or brace-less item), or
 #   - the file/prefix is listed in `guardrails-allow.txt`.
+#
+# RATCHET MODE (adoption without big-bang triage, issue #30): commit a per-file count snapshot
+# (`guardrails-no-hardcoded --record-baseline` → guardrails-baseline.txt, or point
+# GUARDRAILS_HARDCODED_BASELINE elsewhere). With a baseline present, per file:
+#   count > baseline → HARD FAIL (new magic values are gated — strict on growth),
+#   count < baseline → pass + nudge to re-record (the ratchet only tightens),
+#   count = baseline → pass, silently.
+# `--record-baseline` refuses to snapshot a count higher than the committed one. No baseline
+# file → exactly today's all-or-nothing behavior; existing consumers are unaffected.
 set -uo pipefail
 root="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
 cd "$root" || exit 2
 allow="guardrails-allow.txt"
+baseline="${GUARDRAILS_HARDCODED_BASELINE:-guardrails-baseline.txt}"
+
+record=0
+if [ "${1:-}" = "--record-baseline" ]; then record=1; shift; fi
 
 files=()
-if [ "$#" -gt 0 ]; then for a in "$@"; do files+=("$a"); done
+# --record-baseline snapshots the WHOLE scan surface (a baseline of just-staged files would
+# shrink the committed snapshot to whatever happened to be in the index).
+if [ "$#" -gt 0 ] && [ "$record" = 0 ]; then for a in "$@"; do files+=("$a"); done
 else while IFS= read -r x; do files+=("$x"); done < <({ find crates -type f -name '*.rs' -path '*/src/*'; find src -type f -name '*.rs'; } 2>/dev/null); fi
 
 prefixes=()
@@ -57,6 +72,8 @@ if [ -n "${GUARDRAILS_ENV_PREFIXES:-}" ]; then
 fi
 
 hits=0
+all_out=""   # every hit line (printed straight in all-or-nothing mode, filtered in ratchet mode)
+counts=""    # "path<TAB>count" per scanned file (count 0 included — burn-down detection needs it)
 for f in "${files[@]:-}"; do
   [ -f "$f" ] || continue
   is_exempt "$f" && continue
@@ -107,9 +124,64 @@ for f in "${files[@]:-}"; do
       if (t ~ /(^|[^0-9a-zA-Z_.])[1-9][0-9][0-9]/) { print FILENAME ":" FNR ": " $0 }
     }
   ' "$f")"
-  if [ -n "$out" ]; then printf '%s\n' "$out"; hits=$((hits + $(printf '%s\n' "$out" | grep -c .))); fi
+  cnt=0
+  if [ -n "$out" ]; then
+    all_out+="$out"$'\n'
+    cnt=$(printf '%s\n' "$out" | grep -c .)
+    hits=$((hits + cnt))
+  fi
+  counts+="${f#./}"$'\t'"$cnt"$'\n'
 done
+
+# --record-baseline: write the snapshot (nonzero counts only, sorted). The ratchet only
+# tightens: refuse to record any per-file count above the committed one.
+if [ "$record" = 1 ]; then
+  if [ -f "$baseline" ]; then
+    # (baseline loaded via getline, not NR==FNR — an EMPTY committed baseline must not make
+    # awk mistake the first stdin line for a baseline row)
+    regress="$(printf '%s' "$counts" | awk -F'\t' -v bl="$baseline" '
+      BEGIN { while ((getline l < bl) > 0) { n = index(l, "\t"); old[substr(l, 1, n - 1)] = substr(l, n + 1) + 0 } }
+      NF && $2 + 0 > (($1 in old) ? old[$1] : 0) { print "  " $1 ": " (($1 in old) ? old[$1] : 0) " -> " $2 }
+    ')"
+    if [ -n "$regress" ]; then
+      echo "guardrails/no-hardcoded: refusing --record-baseline — count(s) grew past the committed baseline:" >&2
+      printf '%s\n' "$regress" >&2
+      echo "  Fix the new bare values (wrap in const_tunable!/config!), then re-record." >&2
+      exit 1
+    fi
+  fi
+  printf '%s' "$counts" | awk -F'\t' '$2 + 0 > 0' | LC_ALL=C sort > "$baseline"
+  echo "guardrails/no-hardcoded: baseline recorded → $baseline ($(grep -c . "$baseline" 2>/dev/null || echo 0) file(s) with debt). Commit it." >&2
+  exit 0
+fi
+
+# Ratchet mode: a committed baseline splits the verdict per file (growth gates, burn-down
+# nudges re-record, at-baseline stays silent — that's the adoption story).
+if [ -f "$baseline" ]; then
+  over="$(printf '%s' "$counts" | awk -F'\t' -v bl="$baseline" '
+    BEGIN { while ((getline l < bl) > 0) { n = index(l, "\t"); old[substr(l, 1, n - 1)] = substr(l, n + 1) + 0 } }
+    NF && $2 + 0 > (($1 in old) ? old[$1] : 0) { print $1 }
+  ')"
+  under="$(printf '%s' "$counts" | awk -F'\t' -v bl="$baseline" '
+    BEGIN { while ((getline l < bl) > 0) { n = index(l, "\t"); old[substr(l, 1, n - 1)] = substr(l, n + 1) + 0 } }
+    NF && ($1 in old) && $2 + 0 < old[$1] { print $1 }
+  ')"
+  if [ -n "$over" ]; then
+    printf '%s' "$all_out" | awk -F: -v overlist="$over" '
+      BEGIN { n = split(overlist, a, "\n"); for (i = 1; i <= n; i++) ov[a[i]] = 1 }
+      { p = $1; sub(/^\.\//, "", p) }   # counts/baseline keys are ./-normalized; hit lines are raw
+      ov[p]'
+    echo "guardrails/no-hardcoded: $(printf '%s\n' "$over" | grep -c .) file(s) grew past the committed baseline ($baseline) — new bare values are gated. Wrap in const_tunable!/config!, or annotate 'guardrails-ok'." >&2
+    exit 1
+  fi
+  if [ -n "$under" ]; then
+    echo "guardrails/no-hardcoded: NUDGE — $(printf '%s\n' "$under" | grep -c .) file(s) burned below the baseline. Bank the win: guardrails-no-hardcoded --record-baseline (then commit $baseline)." >&2
+  fi
+  exit 0
+fi
+
 if [ "$hits" -gt 0 ]; then
+  printf '%s' "$all_out"
   echo "guardrails/no-hardcoded: $hits bare value(s) — wrap in const_tunable!/config! (→ TUNABLES.md), or annotate 'guardrails-ok'." >&2
   exit 1
 fi
