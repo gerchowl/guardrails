@@ -12,6 +12,11 @@ rest, run deep checks async.* This doc is the contract; `flake.nix` ships the to
 | no-debug-leftovers (`dbg!`/println/console.log) | stdout spew instead of facade | **GATE** |
 | no-commented-code | code graveyards | **GATE** |
 | derived-docs (marker-driven) | docs drift from generator output | **GATE** |
+| adr-matrix (every Accepted ADR cited in the status matrix) | decided designs outrun the feature/status matrix | **GATE** |
+| no-conflict-markers | committed merge-conflict debris | **GATE** |
+| no-raw-trace-fields (`?`/`%` outside the schema file) | PII/secret leak into the audit JSONL | **GATE** |
+| numerical-obligation (ratcheting baselines) | numerical quality contracts silently regress | **GATE** (opt-in) |
+| doc-tests (doctest / trycmd / `mdbook test`) | examples & CLI output drift from real behaviour | **CONVENTION** (consumer-wired, see below) |
 | gitleaks | committed secrets | **GATE** |
 | rustfmt --check, clippy -D warnings | drift from baseline | **GATE** |
 | no-hardcoded-values → tunables registry | magic-number scatter | **GATE** (see below) |
@@ -40,6 +45,55 @@ into one generated, scannable file (can't drift, unlike a hand-maintained allowl
   registered + justified). Both land in a generated `TUNABLES.md` → audit from one file; only the
   first becomes runtime config (so you never expose `workgroup_size` as a nonsense env var).
 - same shape for blessed `unwrap`s, dep additions, and `todo!`s: a generated registry per class.
+
+## Docs-as-tests — the how-to *is* the test suite
+
+The strongest can't-drift docs are the ones CI executes. Invert "write docs about the code" into
+**"make the docs runnable and run them"**: every copy-pasteable example and every shown CLI output is a
+test, so behavioural/API/UX drift **fails the build** instead of rotting silently. This is a
+**convention the consumer wires** — guardrails ships no doc-tests gate; each repo adds the layers that
+apply to it as its own `flake.nix → checks`, so the **same CI shim** runs them, no new workflow and no
+local/CI drift. Three layers:
+
+- **API examples → doctests** (`cargo test --doc`; Python `pytest --doctest-modules` or
+  `python -m doctest`). Change a signature and the example stops compiling; change a result and its
+  `assert` fails.
+- **CLI / UX → `trycmd`/snapbox.** Markdown files of real invocations + expected stdout/stderr/exit,
+  diffed against the actual binary. The *walkthrough pages are the acceptance tests*; an output change
+  fails the diff (`TRYCMD=overwrite` regenerates in place → you review the diff, which *is* the drift
+  report).
+- **The book (if the repo has one) → `mdbook test`.** Code blocks in the static how-to are compiled/run;
+  the published site is a **byproduct of a green test suite**, never a separately-maintained artifact.
+
+(In this repo only `derived-docs` is wired today; the doctest/trycmd/mdbook layers apply to consumers
+with the corresponding surfaces.)
+
+Compose with the **`derived-docs`** gate (generated regions re-run their source command) and you get the
+full ladder: generated regions can't drift, examples can't lie, CLI output can't surprise — all under one
+`nix flake check`. This is the same move as the tunables registry: retire a hand-maintained surface
+(here, prose that *claims* how the tool behaves) for one the machine verifies.
+
+**Honest limit:** this verifies *executable* content — snippets, assertions, shown output — **not prose**.
+A wrong explanation around a correct snippet still needs human review; "tested docs" means *the code in
+them runs and matches*, not *the narrative is right*. Scaffold it **early** (the first real CLI command is
+enough) so UX coverage grows **with** features instead of being retrofitted onto a frozen surface.
+
+## ADR lifecycle hygiene — status integrity, reconcile before flip
+
+The **`adr-matrix`** gate keys on ADR *status*: every **Accepted** ADR must be cited in the project's
+feature/status matrix, so decided designs can't silently outrun the matrix while **Proposed** (roadmap)
+ADRs and typo fixes stay quiet. Two conventions keep that integrity honest:
+
+- **Proposed until *validated*, not just written.** An ADR carrying a load-bearing parameter (a threshold,
+  an overhead, a measured trade-off) stays **Proposed** until a spike measures it; **Accepted** means
+  *decided **and** evidenced* (or as-built) — never aspirational. Flipping early turns the matrix into
+  fiction the gate then faithfully protects.
+- **Reconcile seams *before* flipping; never co-Accept contradictions.** When a later ADR supersedes or
+  absorbs an earlier one, record the relationship **explicitly, with a trigger** ("superseded *when X
+  ships*") and **scoped** (which clause — not the whole ADR). A superseded design becomes **Superseded**;
+  an absorbed one points at its carrier. Two Accepted ADRs must never disagree about the same field, so
+  the matrix reflects exactly one truth per feature. (The `adr-matrix` gate does **not** check
+  co-Accept contradictions — humans do, at flip time.)
 
 ## Logging / tracing — one spine, four payoffs
 
