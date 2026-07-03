@@ -110,6 +110,16 @@
                         { head -2 "$f"; echo "command -v guardrails-freshness-nudge >/dev/null 2>&1 && guardrails-freshness-nudge || true"; tail -n +3 "$f"; } > "$f.tmp" \
                           && mv "$f.tmp" "$f" && chmod +x "$f"
                       fi
+                      # pre-push only: breadcrumb the pre-push HEAD sha. prek's pre-push
+                      # save/restore dance destructively reset a branch mid-push once (#28;
+                      # upstream j178/prek#2278 closed cannot-repro), and reflog archaeology
+                      # was the only way back. The breadcrumb makes recovery deterministic:
+                      #   git reset --hard "$(cat "$(git rev-parse --git-path guardrails-prepush-head)")"
+                      # Injected before prek's exec; reads no stdin; always exits 0.
+                      if [ "$stage" = pre-push ] && [ -f "$f" ] && ! grep -qs guardrails-prepush-head "$f"; then
+                        { head -2 "$f"; echo "git rev-parse -q --verify HEAD > \"\$(git rev-parse --git-path guardrails-prepush-head)\" 2>/dev/null || true"; tail -n +3 "$f"; } > "$f.tmp" \
+                          && mv "$f.tmp" "$f" && chmod +x "$f"
+                      fi
                     done
                   fi
                 fi

@@ -39,6 +39,13 @@ are what the hook installs.
 
 The devShell brings the toolbelt and auto-installs **both hook stages** when a `.pre-commit-config.yaml` is present — `pre-commit` (fast content gates) and `pre-push` (slower gates the local machine runs as CI, e.g. the test suite). The pre-push shim is wired even if the config has no pre-push hooks yet, so the day you add one it's already active. The installed hooks **self-bootstrap the devShell** (direnv, else `nix develop`), so commits/pushes from merges, worktrees, or a plain shell still run the gates instead of erroring on a missing toolbelt.
 
+> **If a push ever fails with `failed to push some refs` and your local commits look gone:** prek's
+> pre-push save/restore has destructively reset a branch mid-push once
+> ([#28](https://github.com/gerchowl/guardrails/issues/28), upstream j178/prek#2278). Nothing is
+> lost — the hook breadcrumbs the pre-push SHA. Recover with:
+> `git reset --hard "$(cat "$(git rev-parse --git-path guardrails-prepush-head)")"`
+> (or `git reflog` if you prefer). One-off bypass: `git push --no-verify`.
+
 ## What's wired (this MVP)
 
 - **Gates** (`gates/*.sh`, on PATH as `guardrails-<name>`, run by `prek`):
