@@ -474,6 +474,40 @@ r2="$(GUARDRAILS_DUP_ENFORCE=1 "$dup_gate" "$tmp/dup_clone" 2>&1)"
 if [ "$r1" = "$r2" ]; then echo "ok    — duplication report is deterministic"
 else echo "FAIL  — duplication report differs across runs"; fails=$((fails + 1)); fi
 
+# --- duplication: staleness escalation (ledger + git-age → auto-promote) ------
+# The nudge earns the right to become a gate: a clone that PERSISTS undealt-with
+# across commits has a decaying false-positive probability, so age promotes it
+# nudge → hard block. Ledger is committed state (like perf-history.csv); age is
+# counted in COMMITS (git as the deterministic clock — no wall-time).
+led="$tmp/dup_ledger.tsv"
+aged="$tmp/dup_aged"
+mkdir -p "$aged"
+dup_block > "$aged/a.rs"
+dup_block > "$aged/b.rs"
+git -C "$aged" init -q
+git -C "$aged" config user.email t@t; git -C "$aged" config user.name t
+git -C "$aged" add -A && git -C "$aged" commit -q -m c1
+# --record stamps the clone group's first-seen at HEAD (c1) into the ledger.
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" "$dup_gate" --record "$aged" >/dev/null 2>&1 )
+if [ -s "$led" ]; then echo "ok    — --record writes the clone ledger"
+else echo "FAIL  — --record did not write a ledger"; fails=$((fails + 1)); fi
+# One more commit → the clone has persisted 1 commit since first-seen.
+: > "$aged/other.txt"; git -C "$aged" add -A && git -C "$aged" commit -q -m c2
+# age(1) ≥ ENFORCE_AGE(1) → persisted clone auto-promotes to a hard block…
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" GUARDRAILS_DUP_ENFORCE_AGE=1 "$dup_gate" "$aged" >/dev/null 2>&1 )
+if [ $? = 1 ]; then echo "ok    — persisted clone auto-promotes to ENFORCE by age"
+else echo "FAIL  — persisted clone did not auto-promote"; fails=$((fails + 1)); fi
+# …but a threshold it has not reached keeps it a nudge (exit 0).
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" GUARDRAILS_DUP_ENFORCE_AGE=99 "$dup_gate" "$aged" >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — clone below the age threshold stays a nudge"
+else echo "FAIL  — clone below age threshold wrongly blocked"; fails=$((fails + 1)); fi
+# Resolving it (decorate one twin) drops it from the ledger on the next --record.
+{ echo "// guardrails-ok"; dup_block; } > "$aged/b.rs"
+git -C "$aged" add -A && git -C "$aged" commit -q -m c3
+( cd "$aged" && GUARDRAILS_DUP_LEDGER="$led" "$dup_gate" --record "$aged" >/dev/null 2>&1 )
+if [ ! -s "$led" ]; then echo "ok    — resolved clone drops from the ledger (ratchet-shrink)"
+else echo "FAIL  — resolved clone lingers in the ledger"; fails=$((fails + 1)); fi
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2

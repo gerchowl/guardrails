@@ -9,26 +9,48 @@
 #
 # NUDGE by default (report, exit 0) — a hard gate here false-positives on
 # intentional repetition and trains `--no-verify`. Promote per-repo with
-# GUARDRAILS_DUP_ENFORCE=1 (pair with a ratcheted baseline, like no-hardcoded).
+# GUARDRAILS_DUP_ENFORCE=1.
+#
+# STALENESS ESCALATION (anti-alarm-fatigue): a flat, repeated nudge habituates —
+# so instead of nagging on a timer, the loudness tracks *persistence*. A finding
+# recorded in the ledger (`--record`, committed like perf-history.csv) carries a
+# first-seen commit; its age is counted in COMMITS to HEAD (git as the
+# deterministic clock — no wall-time, stays reproducible). A clone that survives
+# GUARDRAILS_DUP_ENFORCE_AGE commits undealt-with has a decayed false-positive
+# probability, so it AUTO-PROMOTES from nudge → hard block: the nudge earns the
+# right to become a gate. Decorate or extract it and it drops from the ledger on
+# the next `--record` (ratchet-shrink). No infinite nag: every finding resolves
+# to silence or a one-time block.
 #
 # Precision-first: an EXACT ≥K normalized-line match is a real (type-1/2) clone,
 # so noise stays near zero. Diverged (type-4 "same intent, different code")
 # clones are out of scope for v1 — that needs fuzzy token/embedding similarity,
 # whose noise floor is too high to nudge on without triage. See CONVENTIONS.md.
 #
+# Modes:
+#   guardrails-duplication [paths...]            check + nudge/escalate (default)
+#   guardrails-duplication --record [paths...]   reconcile the ledger to disk
 # Knobs:
-#   GUARDRAILS_DUP_ENFORCE=1        promote from nudge to hard gate (exit 1)
+#   GUARDRAILS_DUP_ENFORCE=1        promote ALL hits from nudge to hard gate
+#   GUARDRAILS_DUP_ENFORCE_AGE=N    auto-promote a finding once it has persisted
+#                                   ≥N commits (0 = off; ledger-driven)
+#   GUARDRAILS_DUP_LEDGER=path      ledger file (default .guardrails/dup-ledger.tsv)
 #   GUARDRAILS_DUP_MIN_LINES=N      window size in significant lines (default 6)
 #   GUARDRAILS_DUP_EXTS="rs go ..." file extensions to scan (default below)
 #   GUARDRAILS_DUP_ALLOW="glob:..." bulk-exclude path globs (space/colon-sep)
-#   per-file escape: a `guardrails-ok` line anywhere in the file (drops it from
-#   the corpus, so its repetition is blessed).
+#   per-file escape: a `guardrails-ok` line drops the file from the corpus.
 set -uo pipefail
+
+record=""
+if [ "${1:-}" = "--record" ]; then record=1; shift; fi
 roots=("${@:-.}")
 enforce="${GUARDRAILS_DUP_ENFORCE:-}"
+enforce_age="${GUARDRAILS_DUP_ENFORCE_AGE:-0}"
+ledger="${GUARDRAILS_DUP_LEDGER:-.guardrails/dup-ledger.tsv}"
 allow="${GUARDRAILS_DUP_ALLOW:-}"
 min_lines="${GUARDRAILS_DUP_MIN_LINES:-6}"
 exts="${GUARDRAILS_DUP_EXTS:-rs go py ts tsx js jsx c h cc cpp hpp java rb sh nix}"
+TAB="$(printf '\t')"
 
 files() {
   for p in "$@"; do
@@ -64,9 +86,11 @@ while IFS= read -r f; do
   list+=("$f")
 done < <(files "${roots[@]}")
 
-[ "${#list[@]}" -gt 1 ] || exit 0   # need ≥2 files for a cross-site clone
-
-report="$(GUARDRAILS_DUP_MIN_LINES="$min_lines" python3 - "${list[@]}" <<'PY'
+# Detection emits one machine record per clone group:
+#   GROUP<TAB>canonical_hash<TAB>n_sites<TAB>span_lines<TAB>site1|site2|...
+groups_raw=""
+if [ "${#list[@]}" -gt 1 ]; then
+  groups_raw="$(GUARDRAILS_DUP_MIN_LINES="$min_lines" python3 - "${list[@]}" <<'PY'
 import hashlib, os, sys
 
 K = max(1, int(os.environ.get("GUARDRAILS_DUP_MIN_LINES", "6")))
@@ -74,7 +98,6 @@ paths = sorted(set(sys.argv[1:]))
 
 
 def norm(line):
-    # Drop trailing line comments (rough, language-agnostic) and collapse ws.
     for marker in ("//", "#"):
         i = line.find(marker)
         if i != -1:
@@ -83,28 +106,21 @@ def norm(line):
 
 
 def significant(nl):
-    # Skip structural/punctuation-only lines (`}`, `);`, `else {` is kept — it
-    # carries a keyword). Threshold on alnum content keeps windows meaningful.
     core = "".join(ch for ch in nl if ch.isalnum() or ch == "_")
     return len(core) >= 3
 
 
-# Per file: significant (orig_lineno, normalized_text).
 sig = {}
 for f in paths:
     try:
         with open(f, "r", errors="replace") as fh:
-            rows = [
-                (ln, nl)
-                for ln, raw in enumerate(fh, 1)
-                if significant(nl := norm(raw))
-            ]
+            rows = [(ln, nl) for ln, raw in enumerate(fh, 1)
+                    if significant(nl := norm(raw))]
     except OSError:
         continue
     if rows:
         sig[f] = rows
 
-# Window (K consecutive significant lines) -> occurrences (file, sig-index).
 occ = {}
 for f in sorted(sig):
     rows = sig[f]
@@ -115,19 +131,16 @@ for f in sorted(sig):
 
 dup = {h: os_ for h, os_ in occ.items() if len(os_) >= 2}
 
-# Mark participating significant indices; remember which hashes cover each.
 cover = {}
 for h, occs in dup.items():
     for (f, i) in occs:
         for j in range(i, i + K):
             cover.setdefault((f, j), set()).add(h)
 
-# Maximal contiguous duplicated regions per file (collapses the overlapping
-# windows of one long clone into a single region → one report line, not many).
-regions = []
 by_file = {}
 for (f, j) in cover:
     by_file.setdefault(f, set()).add(j)
+regions = []
 for f in sorted(by_file):
     idxs = sorted(by_file[f])
     start = prev = idxs[0]
@@ -148,7 +161,6 @@ def region_hashes(r):
     return hs
 
 
-# Union-find regions that share any window hash → one clone group.
 parent = list(range(len(regions)))
 
 
@@ -176,23 +188,77 @@ for ri, r in enumerate(regions):
 out = []
 for members in groups.values():
     sites = sorted(set(members))
-    if len(sites) < 2:  # a lone region is not a cross-site clone
+    if len(sites) < 2:
         continue
     span = max(e - s + 1 for _, s, e in sites)
     labels = [f"{f}:{sig[f][s][0]}-{sig[f][e][0]}" for (f, s, e) in sites]
-    out.append((span, tuple(labels)))
+    hs = set()
+    for r in sites:
+        hs |= region_hashes(r)
+    ghash = min(hs) if hs else ""
+    out.append((span, ghash, len(labels), labels))
 
-for span, labels in sorted(out, key=lambda t: (-t[0], t[1])):
-    print(f"  dup: ~{span} significant lines cloned across {len(labels)} sites: "
-          + ", ".join(labels))
+for span, ghash, nsites, labels in sorted(out, key=lambda t: (-t[0], t[1])):
+    print(f"GROUP\t{ghash}\t{nsites}\t{span}\t{'|'.join(labels)}")
 PY
 )"
+fi
 
-hits="$(printf '%s\n' "$report" | grep -c '^  dup: ' || true)"
+# Load the ledger: canonical_hash -> first_seen_commit, prior sites.
+declare -A led_first led_sites
+if [ -f "$ledger" ]; then
+  while IFS="$TAB" read -r h fseen s _; do
+    [ -n "$h" ] || continue
+    led_first["$h"]="$fseen"; led_sites["$h"]="$s"
+  done < "$ledger"
+fi
+head_sha="$(git rev-parse HEAD 2>/dev/null || true)"
+
+report=""; new_ledger=""; hits=0; promoted=0
+while IFS="$TAB" read -r tag h nsites span labels; do
+  [ "$tag" = GROUP ] || continue
+  hits=$((hits + 1))
+  sites_disp="${labels//|/, }"
+  first="${led_first[$h]:-}"
+  if [ -n "$first" ]; then
+    age="$(git rev-list --count "$first..HEAD" 2>/dev/null || echo 0)"
+    prev="${led_sites[$h]:-$nsites}"
+    grew=""
+    [ "$nsites" -gt "$prev" ] 2>/dev/null && grew=" grew ${prev}→${nsites} sites"
+    if [ "$enforce_age" -gt 0 ] && [ "$age" -ge "$enforce_age" ] 2>/dev/null; then
+      tier="(persisted ${age} commits${grew} → PROMOTED to block)"
+      promoted=$((promoted + 1))
+    elif [ -n "$grew" ]; then
+      tier="(persisted ${age} commits${grew}) ⚠"
+    else
+      tier="(persisted ${age} commits)"
+    fi
+    stamp="$first"
+  else
+    tier="(new)"
+    stamp="$head_sha"
+  fi
+  report+="  dup: ~${span} significant lines cloned across ${nsites} sites ${tier}: ${sites_disp}"$'\n'
+  new_ledger+="${h}${TAB}${stamp}${TAB}${nsites}${TAB}${span}"$'\n'
+done <<< "$groups_raw"
+
+# --record: reconcile the ledger to disk. Persisting groups keep their first-seen
+# commit; new groups are stamped at HEAD; vanished (resolved) groups are dropped
+# → the ledger can only shrink unless real drift appears. Sorted = clean diff.
+if [ -n "$record" ]; then
+  mkdir -p "$(dirname "$ledger")"
+  printf '%s' "$new_ledger" | LC_ALL=C sort > "$ledger"
+  exit 0
+fi
+
 [ "$hits" -gt 0 ] || exit 0
-
-printf '%s\n' "$report"
+printf '%s' "$report"
 msg="guardrails/duplication: $hits cloned block group(s) (≥${min_lines} normalized lines). Extract a shared helper, or bless intentional repetition with a \`guardrails-ok\` line / GUARDRAILS_DUP_ALLOW glob."
+if [ "$promoted" -gt 0 ]; then
+  echo "$msg" >&2
+  echo "  ↑ $promoted finding(s) auto-promoted to a hard block after persisting ≥${enforce_age} commits undealt-with." >&2
+  exit 1
+fi
 if [ -n "$enforce" ]; then
   echo "$msg" >&2
   exit 1
