@@ -840,6 +840,53 @@ ptp_assert "env fallback passes feature ref (prek)"   0 PRE_COMMIT_REMOTE_BRANCH
 ptp_assert "stdin takes precedence over env fallback" 0 PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- "refs/heads/feat/x $sha_a refs/heads/feat/x $sha_a"
 ptp_assert "env fallback honors empty-knob opt-out"   0 GUARDRAILS_PROTECTED_BRANCHES= PRE_COMMIT_REMOTE_BRANCH=refs/heads/main -- ""
 
+# --- nudge-ledger: the shared persistence-escalation harness (issue #32) -------
+# Gate-agnostic lifecycle: new → quiet · persisted → age-in-commits (+growth) →
+# promoted past --enforce-age · resolved → dropped on record. Pins exactly the
+# transitions the #31 review flagged: oscillation and orphaned first-seen SHAs.
+nl="$here/../tools/nudge-ledger.sh"
+nrepo="$tmp/nl-repo"; mkdir -p "$nrepo"
+git init -q -b main "$nrepo"
+git -C "$nrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+nled="$nrepo/led.tsv"
+nl_run() { ( cd "$nrepo" && "$nl" "$@" ); }
+TABC="$(printf '\t')"
+nl_check() { # desc, want-substr, got
+  if printf '%s' "$3" | grep -q "$2"; then echo "ok    — nudge-ledger: $1"
+  else echo "FAIL  — nudge-ledger: $1 (got: $3)"; fails=$((fails + 1)); fi
+}
+fnd() { printf 'k1\t%s\tlabel-one\n' "$1"; }
+out="$(fnd 2 | nl_run check --ledger "$nled")"
+nl_check "unseen finding tiers as new" "k1${TABC}new" "$out"
+fnd 2 | nl_run record --ledger "$nled"
+if grep -q "k1" "$nled"; then echo "ok    — nudge-ledger: record stamps first-seen"
+else echo "FAIL  — nudge-ledger: record wrote nothing"; fails=$((fails + 1)); fi
+git -C "$nrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c2
+out="$(fnd 2 | nl_run check --ledger "$nled")"
+nl_check "persisted finding ages in commits" "k1${TABC}persisted:1" "$out"
+out="$(fnd 3 | nl_run check --ledger "$nled")"
+nl_check "growth is tiered with prev>now" "persisted:1:grew:2>3" "$out"
+out="$(fnd 3 | nl_run check --ledger "$nled" --enforce-age 1)"
+nl_check "age past --enforce-age promotes (grew kept)" "promoted:1:grew:2>3" "$out"
+# resolved → dropped on record (ratchet-shrink)…
+: | nl_run record --ledger "$nled"
+if [ ! -s "$nled" ]; then echo "ok    — nudge-ledger: resolved finding drops on record"
+else echo "FAIL  — nudge-ledger: resolved finding lingered"; fails=$((fails + 1)); fi
+# …and OSCILLATION: reappearing after resolve+record restarts the age at 0 (fresh stamp).
+fnd 2 | nl_run record --ledger "$nled"
+out="$(fnd 2 | nl_run check --ledger "$nled" --enforce-age 1)"
+nl_check "reappeared finding restarts age (no stale promote)" "k1${TABC}persisted:0" "$out"
+# Orphaned first-seen (shallow clone / rewritten history): age falls back to 0 + one warning.
+printf 'k1\t%s\t2\n' "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" > "$nled"
+err="$(fnd 2 | nl_run check --ledger "$nled" --enforce-age 1 2>&1 >/dev/null)"
+out="$(fnd 2 | nl_run check --ledger "$nled" --enforce-age 1 2>/dev/null)"
+nl_check "orphaned first-seen fails open (age 0, no promote)" "k1${TABC}persisted:0" "$out"
+nl_check "orphaned first-seen warns on stderr (not silent)" "unreachable" "$err"
+# Garbage --enforce-age is a usage error (exit 2), not a silent misread.
+( : | nl_run check --ledger "$nled" --enforce-age abc >/dev/null 2>&1 )
+if [ $? = 2 ]; then echo "ok    — nudge-ledger: garbage enforce-age is a loud usage error"
+else echo "FAIL  — nudge-ledger: garbage enforce-age accepted"; fails=$((fails + 1)); fi
+
 # --- guardrails-trace: duration+verdict JSONL wrapper (issue #14) --------------
 # Transparent wrapper: exit code + streams pass through; one atomic row per run in
 # the XDG cache; guardrails last replays the latest run and cannot be swallowed.
