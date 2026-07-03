@@ -3,7 +3,8 @@
 # value lands in the generated TUNABLES.md (registered + auditable from one file). This is the
 # enforcement half of the decorator→registry pattern.
 #
-# Heuristic (low false-positive, documented): in scanned `crates/*/src/**/*.rs`, flags
+# Heuristic (low false-positive, documented): in scanned `crates/*/src/**/*.rs` and root
+# `src/**/*.rs` (single-crate repos), flags
 #   * float literals (except 0.0/0.5/1.0/2.0) — checked PER TOKEN, so an allowed `0.0` on the same
 #     line doesn't mask a `3.7`,
 #   * decimal integers >= 100 (hex/binary excluded; digit-group underscores normalised so `100_000`
@@ -16,7 +17,7 @@
 #   - is inside a `const_tunable!(...)` / `config!(...)` invocation (the sanctioned home), or
 #   - carries `guardrails-ok` / `hardcode-ok`, or sits inside a
 #     `guardrails-ok-begin` … `guardrails-ok-end` block (hardcode-ok-begin/-end work too), or
-#   - sits in a `#[cfg(test)]` module, or
+#   - sits in the `#[cfg(test)]`-attributed item (module body or brace-less item), or
 #   - the file/prefix is listed in `guardrails-allow.txt`.
 set -uo pipefail
 root="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
@@ -25,20 +26,25 @@ allow="guardrails-allow.txt"
 
 files=()
 if [ "$#" -gt 0 ]; then for a in "$@"; do files+=("$a"); done
-else while IFS= read -r x; do files+=("$x"); done < <(find crates -type f -name '*.rs' -path '*/src/*' 2>/dev/null); fi
+else while IFS= read -r x; do files+=("$x"); done < <({ find crates -type f -name '*.rs' -path '*/src/*'; find src -type f -name '*.rs'; } 2>/dev/null); fi
 
 prefixes=()
 [ -f "$allow" ] && while IFS= read -r l; do l="${l%%#*}"; l="$(printf '%s' "$l" | tr -d '[:space:]')"; [ -n "$l" ] && prefixes+=("$l"); done < "$allow"
 
 is_exempt() {
-  case "$1" in *.rs) ;; *) return 0 ;; esac
-  case "$1" in */src/*) ;; *) return 0 ;; esac
+  # Normalise `./src/x.rs` → `src/x.rs` so the repo-root patterns below match both shapes.
+  local path="${1#./}"
+  case "$path" in *.rs) ;; *) return 0 ;; esac
+  # `src/*` covers single-crate repos (pre-commit passes RELATIVE paths from the repo root —
+  # `src/foo.rs` never matches `*/src/*`, which previously made the gate vacuously green there);
+  # `*/src/*` covers workspace `crates/*/src/**` and absolute paths.
+  case "$path" in src/*|*/src/*) ;; *) return 0 ;; esac
   # NB: guard the empty expansion — `"${prefixes[@]:-}"` yields ONE EMPTY WORD when the array is
   # empty, and an empty prefix `case`-matches every path: without this guard the gate silently
   # exempted ALL files whenever guardrails-allow.txt was absent (a vacuously-green gate).
   for p in "${prefixes[@]:-}"; do
     [ -n "$p" ] || continue
-    case "$1" in "$p"*) return 0 ;; esac
+    case "$path" in "$p"*) return 0 ;; esac
   done
   return 1
 }
@@ -55,7 +61,21 @@ for f in "${files[@]:-}"; do
   [ -f "$f" ] || continue
   is_exempt "$f" && continue
   out="$(awk -v env_re="$env_re" '
-    /#\[cfg\(test\)\]/ { intest = 1 } intest { next }
+    # #[cfg(test)] exempts only the ITEM it attributes, not the rest of the file: arm on the
+    # attribute, then skip until the item body closes (brace-counted on a string/comment-stripped
+    # copy) or a brace-less item (`use`/`mod foo;`/const) ends in `;`. Previously the flag never
+    # reset, so all prod code below any mid-file test attr/helper went unscanned to EOF.
+    /#\[cfg\(test\)\]/ { intest = 1; tdepth = 0 }
+    intest {
+      body = $0
+      sub(/\/\/.*/, "", body)
+      gsub(/"[^"]*"/, "", body)
+      opens = gsub(/{/, "", body); closes = gsub(/}/, "", body)
+      tdepth += opens - closes
+      if (opens + closes > 0 && tdepth <= 0) intest = 0
+      else if (opens == 0 && tdepth == 0 && body ~ /;[[:space:]]*$/) intest = 0
+      next
+    }
     /guardrails-ok-begin|hardcode-ok-begin/ { inblock = 1; next }   # block escape: exempt until -end
     /guardrails-ok-end|hardcode-ok-end/     { inblock = 0; next }
     inblock { next }

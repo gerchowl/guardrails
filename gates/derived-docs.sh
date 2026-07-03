@@ -83,7 +83,7 @@ process_file() {
   if ! grep -qE 'guardrails:derived' "$f" 2>/dev/null; then return 0; fi
 
   # Walk the file line by line, tracking region state.
-  local lineno=0 in_region=0 region_start=0 cmd="" body=""
+  local lineno=0 in_region=0 region_start=0 body_start=0 cmd="" body=""
   local out_lines=() change=0
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
@@ -93,6 +93,10 @@ process_file() {
         region_start=$lineno
         body=""
         out_lines+=("$line")
+        # Body position in REBUILT-OUTPUT coordinates: once an earlier region's
+        # replacement changed the line count, source line numbers no longer map
+        # onto out_lines — truncating by them eats the text between regions.
+        body_start=${#out_lines[@]}
         continue
       fi
       if [[ "$line" =~ $END_RE ]]; then
@@ -112,6 +116,7 @@ process_file() {
         cmd="$cmd2"
         body=""
         out_lines+=("$line")
+        body_start=${#out_lines[@]}
         continue
       fi
       if [[ "$line" =~ $END_RE ]]; then
@@ -133,12 +138,10 @@ process_file() {
           hits=$((hits + 1))
           if [ "$fix" = 1 ]; then
             change=1
-            # Replace the region body with fresh content. We rebuild out_lines by dropping the
-            # body lines we already pushed (region_start was the start marker; body lines are
-            # everything after it up to but not including this end line) and pushing the fresh
-            # ones instead.
-            local keep=$((region_start))   # 1-based count of out_lines to keep (start marker incl.)
-            out_lines=("${out_lines[@]:0:$keep}")
+            # Replace the region body with fresh content: drop the body lines already pushed
+            # (everything after the start marker, whose rebuilt-output position is body_start)
+            # and push the fresh ones instead.
+            out_lines=("${out_lines[@]:0:$body_start}")
             # Push each line of fresh_n. printf with %s and read -r preserves embedded blanks.
             while IFS= read -r fl; do out_lines+=("$fl"); done <<< "$fresh_n"
           else
