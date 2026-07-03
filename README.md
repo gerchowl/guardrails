@@ -108,7 +108,10 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
    service — git is the time-series store). `cargo-criterion` in the toolbelt; gate big regressions /
    nudge the rest, per the honest-measurement methodology in `docs/CONVENTIONS.md`.
 4. **mutation-testing CI** — `cargo-mutants` job (test-quality signal vs coverage theater).
-5. **duplication nudge** — token-based clone detector (reinvention-vs-reuse), tuned threshold.
+5. ~~**duplication nudge**~~ ✅ **shipped** — `duplication` flags a ≥K normalized-line block cloned
+   across ≥2 sites (reinvention-vs-reuse). Precision-first exact-window match keeps false positives
+   near zero; `GUARDRAILS_DUP_MIN_LINES` / `_ENFORCE` / `_ALLOW` knobs. Diverged (type-4 "same intent,
+   different code") clones stay out of scope — fuzzy similarity's noise floor is too high to nudge on.
 6. **diff blast-radius nudge** — flag PRs sprawling across unrelated areas.
 7. **generated escape registries** — blessed `unwrap`/dep/`todo!` lists, generated not hand-kept.
 8. **non-Rust gate coverage** — the gates already handle TS/JS/Py/Go; add ecosystem tools
