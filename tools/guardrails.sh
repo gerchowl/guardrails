@@ -6,6 +6,7 @@ case "${1:-info}" in
   info | "" | -h | --help | help)
     if [ "${2:-}" = "--perf" ]; then shift 2; exec guardrails-trace-report perf "$@"; fi ;;
   last) shift; exec guardrails-trace-report last "$@" ;;
+  stale) shift; exec guardrails-stale "$@" ;;
   freshness) shift; exec guardrails-freshness "$@" ;;
   diffpack) shift; exec guardrails-diffpack "$@" ;;
   *) echo "guardrails: unknown command '$1' (try: guardrails info)" >&2 ;;
@@ -87,6 +88,13 @@ FRESH-EYES REVIEW (author ≠ reviewer — see CONVENTIONS.md):
                                   first, ADR refs, then the diff — pipe to a fresh-context
                                   reviewer (agent or human) with refutation framing
   guardrails diffpack --base origin/main    branch review instead of working tree
+
+STALE GATES (tiers by config, not by daemon — issue #13):
+  guardrails stale         which gates are overdue — calendar (days since last green run)
+                           AND churn (files/lines since) vs guardrails-stale.toml thresholds;
+                           one line, exit 0 always. --json for prompt segments / agent hooks.
+                           Delivered once/week after a push (guardrails-stale-nudge), same
+                           throttle discipline as the freshness nudge.
 
 FLAKE FRESHNESS (off the hot path — on demand, not on `cd`):
   guardrails freshness            this flake's inputs by lock age (offline)

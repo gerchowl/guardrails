@@ -36,6 +36,20 @@ Hard-gate deterministic high-confidence; nudge probabilistic/tunable; run slow/d
 **Avoid (noise traps):** coverage-% targets (gamed → use diff-coverage + mutants), cyclomatic
 thresholds, naming/line-length dogma (formatter's job), any *probabilistic* check as a hard gate.
 
+## Soft-gate tiers — when a check runs is a design axis too
+
+Gates have a natural three-tier shape (issue #13): **instant** greps run every commit and need
+nothing; **cheap** checks (fmt, config lint, lockfile-scoped deny) can afford every commit or
+push; **heavy / calendar-drifting** checks (clippy --all-targets, advisory DBs, full suites)
+run at push/CI — and *those* are the ones that go quietly stale. The failure mode is real: an
+advisory DB moves on the calendar while the repo sits still, and the gate only wakes when a
+big commit finally touches the lockfile. Countermeasure: `guardrails stale` — a stateless
+one-shot that compares each gate's last GREEN run (from the #14 trace) against per-gate
+`guardrails-stale.toml` thresholds, on BOTH levers (calendar `max_days`, churn
+`max_files`/`max_lines`). No daemon, no watcher — delivery reuses the once/week post-push
+nudge slot, and richer surfaces (prompt segments, agent hooks) call `guardrails stale --json`
+and own their own throttle.
+
 ## The escape hatch + the registry pattern
 
 Every gate has a justified escape: annotate the line `guardrails-ok`. But the *better* form for
