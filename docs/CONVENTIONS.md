@@ -192,6 +192,26 @@ forever unattributable.
   ratio/statistical comparison on noisy hardware; flag software-vs-real-GPU and harness caps. Wrong
   methodology bakes in confidently-wrong baselines — worse than none.
 
+## Local-first gate lifecycle — trunk advances when it's *earned*
+
+The model (issue #18), composed from pieces that each ship separately:
+
+1. **Single-sourced gates.** One gate definition feeds every consumer: the gate scripts run as
+   prek hooks locally AND as `checks.guardrails` in the consumer's flake (the template wires
+   it) — so `nix flake check`, and therefore the ci.yml shim, enforces the same set. Never two
+   lists.
+2. **protect-trunk** (the floor): trunk advances by merge/PR only — the "wrong place" class is
+   blocked at commit AND at push (remote-ref keyed).
+3. **trunk-merge-gate** (the earned upgrade, solo/trusted-operator repos):
+   `GUARDRAILS_TRUNK_MERGE_GATE=1` turns the *push-side* refusal into a pass condition — the
+   push to a protected ref is allowed iff `GUARDRAILS_TRUNK_MERGE_CMD` (default
+   `nix flake check`) is green *right now*. Pre-push is the honest seam: the commit's own
+   hooks already ran, and the flake checks are a superset of the commit tier, so green here
+   adds real signal. "Don't commit to main" becomes "commit to main when it's earned."
+4. **Runners are for cross-platform release, not enforcement.** Because gates are nix
+   derivations, a dev machine and a hosted runner compute the *same* verdict — the runner adds
+   storage and platforms, not truth. (Self-reported forge status = follow-up.)
+
 ## CI = a shim over a local-runnable check
 
 **The logic lives in `nix flake check`; the workflow only triggers it.** One definition runs

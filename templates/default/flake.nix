@@ -29,5 +29,17 @@
         # Starts with "the dev shell builds"; add real checks (cargo test, build,
         # frontend build, …). Host-bound jobs (e2e/platform) stay out — own workflow.
         checks.default = self.devShells.${system}.default;
+
+        # Single-sourced gates (issue #18): the SAME gate scripts prek runs on commit run
+        # here over the repo — so `nix flake check` (local or via the ci.yml shim) enforces
+        # the gates too. Without this, CI enforces nothing beyond "the flake evaluates".
+        checks.guardrails = pkgs.runCommand "guardrails-gates-check"
+          { buildInputs = [ guardrails.packages.${system}.gates ]; } ''
+            cd ${self}
+            guardrails-no-fake-impl . && guardrails-no-debug-leftovers . \
+              && guardrails-no-commented-code . && guardrails-no-conflict-markers . \
+              && guardrails-no-raw-trace-fields . \
+              && touch $out
+          '';
       });
 }

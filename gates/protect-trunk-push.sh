@@ -28,6 +28,29 @@ fi
 case "${CI:-}" in true|1) exit 0 ;; esac
 case "${GITHUB_ACTIONS:-}" in true|1) exit 0 ;; esac
 
+# Trunk-merge-gate (issue #18): "advance trunk when it's EARNED" — for solo/trusted-operator
+# repos, GUARDRAILS_TRUNK_MERGE_GATE=1 turns the hard refusal into a pass condition: the push
+# to a protected ref is allowed iff the repo's full check suite is green RIGHT NOW. Pre-push
+# is the honest seam for this (not pre-commit): the commit's own hooks already ran, and
+# `nix flake check` is a SUPERSET of the commit tier (adr-matrix, budgets, ratchets, tests) —
+# so green here means something new. Default off; PR-flow fleets keep the plain refusal.
+trunk_merge_gate() {
+  [ "${GUARDRAILS_TRUNK_MERGE_GATE:-0}" = 1 ] || return 1
+  local cmd="${GUARDRAILS_TRUNK_MERGE_CMD:-nix flake check}"
+  echo "guardrails/protect-trunk-push: trunk-merge-gate — earning the push with: $cmd" >&2
+  if $cmd >&2; then
+    echo "guardrails/protect-trunk-push: guards green — trunk push earned." >&2
+    return 0
+  fi
+  echo "guardrails/protect-trunk-push: guards NOT green — trunk push refused (fix the checks, or push a branch + PR)." >&2
+  return 2
+}
+tmg_memo="" # the check suite runs at most once per push, however many refs match
+trunk_merge_gate_once() {
+  if [ -z "$tmg_memo" ]; then trunk_merge_gate; tmg_memo=$?; fi
+  return "$tmg_memo"
+}
+
 IFS=: read -ra protected <<< "${GUARDRAILS_PROTECTED_BRANCHES-main:master}"
 
 zeros=0000000000000000000000000000000000000000
@@ -42,10 +65,15 @@ check_remote_ref() { # $1 = remote ref (refs/heads/... or a bare branch name fro
     # shellcheck disable=SC2254  # $pat is intentionally a glob
     case "$branch" in
       $pat)
-        echo "guardrails/protect-trunk-push: refusing to push to protected '$branch' — trunk advances by merge/PR only." >&2
-        echo "  Push a feature branch and open a PR:  git push origin HEAD:refs/heads/<feature-name>" >&2
-        echo "  Intentional (hotfix/release)?         GUARDRAILS_ALLOW_TRUNK=1 git push ..." >&2
-        fails=$((fails + 1))
+        if trunk_merge_gate_once; then
+          : # trunk-merge-gate earned this push — green guards ARE the pass condition
+        else
+          echo "guardrails/protect-trunk-push: refusing to push to protected '$branch' — trunk advances by merge/PR only." >&2
+          echo "  Push a feature branch and open a PR:  git push origin HEAD:refs/heads/<feature-name>" >&2
+          echo "  Intentional (hotfix/release)?         GUARDRAILS_ALLOW_TRUNK=1 git push ..." >&2
+          echo "  Solo/trunk-flow with green guards?    GUARDRAILS_TRUNK_MERGE_GATE=1 (earn it — see 'guardrails info')" >&2
+          fails=$((fails + 1))
+        fi
         ;;
     esac
   done
