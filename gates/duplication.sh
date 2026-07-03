@@ -92,7 +92,7 @@ done < <(files "${roots[@]}")
 groups_raw=""
 if [ "${#list[@]}" -gt 1 ]; then
   groups_raw="$(GUARDRAILS_DUP_MIN_LINES="$min_lines" python3 - "${list[@]}" <<'PY'
-import hashlib, os, sys
+import hashlib, multiprocessing, os, sys
 
 K = max(1, int(os.environ.get("GUARDRAILS_DUP_MIN_LINES", "6")))
 paths = sorted(set(sys.argv[1:]))
@@ -111,23 +111,43 @@ def significant(nl):
     return len(core) >= 3
 
 
-sig = {}
-for f in paths:
+# Per-file scan: read + normalize + K-window hash. Embarrassingly parallel — this is the
+# compute that made duplication the wall-clock ceiling of the whole gate set (#34: the
+# verdict was "parallelize the lone compute island, don't build the engine"). The union-find
+# merge below stays serial (cheap).
+def scan(f):
     try:
         with open(f, "r", errors="replace") as fh:
             rows = [(ln, nl) for ln, raw in enumerate(fh, 1)
                     if significant(nl := norm(raw))]
     except OSError:
-        continue
-    if rows:
-        sig[f] = rows
-
-occ = {}
-for f in sorted(sig):
-    rows = sig[f]
+        return f, None, None
+    if not rows:
+        return f, None, None
+    win = []
     for i in range(len(rows) - K + 1):
         text = "\n".join(rows[j][1] for j in range(i, i + K))
-        h = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+        win.append((i, hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()))
+    return f, rows, win
+
+
+# fork, not spawn: this script arrives on stdin, so spawn's __main__ re-import is impossible
+# (macOS default). Workers touch only hashlib/str — fork-safe. Small corpora skip the pool
+# (fork+IPC overhead beats the win under ~32 files). pool.map preserves order → deterministic.
+cpus = os.cpu_count() or 1
+if len(paths) >= 32 and cpus > 1 and "fork" in multiprocessing.get_all_start_methods():
+    with multiprocessing.get_context("fork").Pool(min(cpus, 8)) as pool:
+        results = pool.map(scan, paths, chunksize=max(1, len(paths) // (cpus * 4)))
+else:
+    results = [scan(f) for f in paths]
+
+sig = {}
+occ = {}
+for f, rows, win in results:
+    if rows is None:
+        continue
+    sig[f] = rows
+    for i, h in win:
         occ.setdefault(h, []).append((f, i))
 
 dup = {h: os_ for h, os_ in occ.items() if len(os_) >= 2}
