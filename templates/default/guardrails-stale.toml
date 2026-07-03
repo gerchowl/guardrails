@@ -4,7 +4,7 @@
 # HEAVY/calendar-drifting checks (advisory DBs!) earn max_days.
 #
 # [cargo-deny]      # RUSTSEC advisories drift on the calendar even when the repo sits still
-# max_days = 7
+# max_days = 7      # fires when STRICTLY more than 7 days since the last green run
 #
 # [clippy]          # heavy tier: nudge when churn piles up un-linted between pushes
 # max_files = 40

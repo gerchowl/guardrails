@@ -32,14 +32,14 @@ cfg="$top/guardrails-stale.toml"
 if [ "$json" = 0 ] && [ ! -f "$cfg" ]; then exit 0; fi
 
 python3 - "$trace" "$cfg" "$json" <<'PY'
-import json, subprocess, sys
+import json, os, subprocess, sys
 from datetime import datetime, timezone
 
 trace, cfg_path, want_json = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 
 try:
     import tomllib
-    cfg = tomllib.load(open(cfg_path, "rb")) if cfg_path and __import__("os").path.exists(cfg_path) else {}
+    cfg = tomllib.load(open(cfg_path, "rb")) if cfg_path and os.path.exists(cfg_path) else {}
 except Exception:
     cfg = {}
 
@@ -94,6 +94,9 @@ for g in gates:
     stats[g] = {"last_green": ts, "days_since_green": days,
                 "files_since_green": nfiles, "lines_since_green": nlines}
     rules = cfg.get(g, {}) if isinstance(cfg.get(g, {}), dict) else {}
+    for k in rules:
+        if k not in ("max_days", "max_files", "max_lines"):
+            print(f"guardrails-stale: unknown key '{k}' in [{g}] (want max_days/max_files/max_lines)", file=sys.stderr)
     why = []
     if ts is None and rules:
         why.append("never green")

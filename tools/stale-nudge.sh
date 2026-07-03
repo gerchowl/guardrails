@@ -14,6 +14,7 @@ key="$(printf '%s' "$top" | tr -c 'A-Za-z0-9.' '_')"
 nag="$cache/$key.stale-nag"
 
 nag_min="${GUARDRAILS_STALE_NAG_MIN:-10080}"
+case "$nag_min" in ''|*[!0-9]*) nag_min=10080 ;; esac # garbage knob → default, not silence-forever
 if [ -f "$nag" ] && [ -z "$(find "$nag" -mmin "+$nag_min" 2>/dev/null)" ]; then
   exit 0 # nudged recently — quiet (stamp untouched, so staleness still surfaces later)
 fi
