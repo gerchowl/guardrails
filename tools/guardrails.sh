@@ -3,7 +3,9 @@
 # added guardrails to our repo; now what?". Print with `guardrails` or `guardrails info`.
 set -uo pipefail
 case "${1:-info}" in
-  info | "" | -h | --help | help) ;;
+  info | "" | -h | --help | help)
+    if [ "${2:-}" = "--perf" ]; then shift 2; exec guardrails-trace-report perf "$@"; fi ;;
+  last) shift; exec guardrails-trace-report last "$@" ;;
   freshness) shift; exec guardrails-freshness "$@" ;;
   diffpack) shift; exec guardrails-diffpack "$@" ;;
   *) echo "guardrails: unknown command '$1' (try: guardrails info)" >&2 ;;
@@ -69,6 +71,14 @@ CONFIG KNOBS (in your repo root):
 
 WIRE THE HOOKS (normally automatic via direnv / nix develop — both stages):
   just install-hooks    or    prek install -t pre-commit -t pre-push
+
+GATE TRACING (opt-in per entry — wrap it):
+  entry: guardrails-trace <name> -- <cmd...>   append one JSONL row per gate run (duration,
+                           verdict, exit code) to the XDG cache — transparent: streams and
+                           exit code pass through untouched
+  guardrails info --perf   per-gate n/p50/p95/fail%/last-fail (+ tier-3 / retire hints)
+  guardrails last          the most recent run's verdicts; any FAIL repeats on stderr and
+                           exits 1 — a piped/truncated stdout can't swallow a red gate
 
 FRESH-EYES REVIEW (author ≠ reviewer — see CONVENTIONS.md):
   guardrails diffpack             one reviewable artifact: escape-hatch + gate-config deltas
