@@ -1,0 +1,13 @@
+# guardrails-stale thresholds (issue #13) — which gates are overdue, by calendar AND churn.
+# Uncomment to opt in; `guardrails stale` stays silent without this file.
+# The tier intuition: instant greps never need this; CHEAP checks earn a churn threshold;
+# HEAVY/calendar-drifting checks (advisory DBs!) earn max_days.
+#
+# [cargo-deny]      # RUSTSEC advisories drift on the calendar even when the repo sits still
+# max_days = 7
+#
+# [clippy]          # heavy tier: nudge when churn piles up un-linted between pushes
+# max_files = 40
+#
+# [no-fake-impl]
+# max_lines = 500

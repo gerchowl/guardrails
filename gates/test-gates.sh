@@ -936,6 +936,42 @@ if grep -q '"gate":"manual-gate","trigger":"manual"' "$tfile"; then
   echo "ok    — trace: bare invocation defaults to trigger=manual"
 else echo "FAIL  — trace: manual trigger default missing"; fails=$((fails + 1)); fi
 
+# --- guardrails-stale: calendar+churn staleness vs config thresholds (issue #13) ---
+stale="$here/../tools/stale.sh"
+srepo="$tmp/stale-repo"; mkdir -p "$srepo"
+git init -q -b main "$srepo" && git -C "$srepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+stop="$(git -C "$srepo" rev-parse --show-toplevel)" # macOS: /var vs /private/var — use git's answer
+sslug="$(basename "$stop")-$(printf '%s' "$stop" | git hash-object --stdin | cut -c1-6)"
+sdir="$tmp/xdg-stale/guardrails/runs"; mkdir -p "$sdir"
+st_run() { ( cd "$srepo" && env XDG_CACHE_HOME="$tmp/xdg-stale" "$stale" "$@" ); }
+# no trace + no config → silent, exit 0
+rm -f "$sdir/$sslug.jsonl" "$srepo/guardrails-stale.toml"
+s_out="$(st_run 2>&1)"; s_ec=$?
+if [ "$s_ec" = 0 ] && [ -z "$s_out" ]; then echo "ok    — stale: silent without trace/config"
+else echo "FAIL  — stale: noisy without opt-in ($s_ec: $s_out)"; fails=$((fails + 1)); fi
+# trace with an OLD green run + max_days=0 → stderr names the gate; exit stays 0
+printf '{"v":1,"ts":"2020-01-01T00:00:00Z","run_id":"r1","repo":"x","gate":"cargo-deny","trigger":"pre-push","verdict":"pass","exit_code":0,"duration_ms":5,"changed_files":0}\n' > "$sdir/$sslug.jsonl"
+printf '[cargo-deny]\nmax_days = 7\n' > "$srepo/guardrails-stale.toml"
+s_err="$(st_run 2>&1 >/dev/null)"; s_ec=$?
+if [ "$s_ec" = 0 ] && printf '%s' "$s_err" | grep -q 'cargo-deny.*d'; then echo "ok    — stale: calendar-overdue gate nudged (exit 0)"
+else echo "FAIL  — stale: calendar lever broken ($s_ec: $s_err)"; fails=$((fails + 1)); fi
+# fresh green run → quiet
+printf '{"v":1,"ts":"%s","run_id":"r2","repo":"x","gate":"cargo-deny","trigger":"pre-push","verdict":"pass","exit_code":0,"duration_ms":5,"changed_files":0}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$sdir/$sslug.jsonl"
+s_err="$(st_run 2>&1 >/dev/null)"
+if [ -z "$s_err" ]; then echo "ok    — stale: freshly-green gate stays quiet"
+else echo "FAIL  — stale: false nudge on fresh gate ($s_err)"; fails=$((fails + 1)); fi
+# configured gate that never ran green → 'never green'
+printf '[clippy]\nmax_days = 7\n' >> "$srepo/guardrails-stale.toml"
+s_err="$(st_run 2>&1 >/dev/null)"
+if printf '%s' "$s_err" | grep -q 'clippy never green'; then echo "ok    — stale: never-green configured gate surfaces"
+else echo "FAIL  — stale: never-green gate invisible ($s_err)"; fails=$((fails + 1)); fi
+# --json works without config and carries per-gate stats
+rm "$srepo/guardrails-stale.toml"
+s_json="$(st_run --json 2>/dev/null)"
+if printf '%s' "$s_json" | grep -q '"cargo-deny"' && printf '%s' "$s_json" | grep -q 'days_since_green'; then
+  echo "ok    — stale: --json emits per-gate stats without config"
+else echo "FAIL  — stale: --json broken ($s_json)"; fails=$((fails + 1)); fi
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2

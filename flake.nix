@@ -38,6 +38,8 @@
           install -m755 ${./tools/trace-report.sh} $out/bin/guardrails-trace-report
           install -m755 ${./tools/diffpack.sh} $out/bin/guardrails-diffpack
           install -m755 ${./tools/nudge-ledger.sh} $out/bin/guardrails-nudge-ledger
+          install -m755 ${./tools/stale.sh} $out/bin/guardrails-stale
+          install -m755 ${./tools/stale-nudge.sh} $out/bin/guardrails-stale-nudge
           patchShebangs $out/bin   # see gates above — sandbox has no /usr/bin/env
         '';
 
@@ -112,6 +114,12 @@
                       # cache, never stdin (pre-push's ref list must reach prek), and always exits 0.
                       if [ "$stage" = pre-push ] && [ -f "$f" ] && ! grep -qs guardrails-freshness-nudge "$f"; then
                         { head -2 "$f"; echo "command -v guardrails-freshness-nudge >/dev/null 2>&1 && guardrails-freshness-nudge || true"; tail -n +3 "$f"; } > "$f.tmp" \
+                          && mv "$f.tmp" "$f" && chmod +x "$f"
+                      fi
+                      # pre-push only: the once/week stale-gates nudge (issue #13) — same slot,
+                      # same discipline as the freshness nudge: cache-only, no stdin, exit 0.
+                      if [ "$stage" = pre-push ] && [ -f "$f" ] && ! grep -qs guardrails-stale-nudge "$f"; then
+                        { head -2 "$f"; echo "command -v guardrails-stale-nudge >/dev/null 2>&1 && guardrails-stale-nudge || true"; tail -n +3 "$f"; } > "$f.tmp" \
                           && mv "$f.tmp" "$f" && chmod +x "$f"
                       fi
                       # pre-push only: breadcrumb the pre-push HEAD sha. prek's pre-push
