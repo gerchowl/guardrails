@@ -61,9 +61,10 @@ if [ "${#web_files[@]}" -gt 0 ]; then
   matches+="$(printf '%s\0' "${web_files[@]}" | xargs -0 grep -nHE "$web_pat" 2>/dev/null)"$'\n'
 fi
 
-# Drop `guardrails-ok`-annotated lines (per-line escape); each grep line is one
-# source line, so filtering the joined `file:line:content` stays per-line.
-leaks="$(printf '%s' "$matches" | grep -v 'guardrails-ok' | grep -vE '^[[:space:]]*$')"
+# Drop `guardrails-ok`-annotated lines (per-line escape). Scope the filter to the
+# content past the `file:line:` prefix — filtering the whole joined line would let
+# a path containing 'guardrails-ok' suppress every finding under it.
+leaks="$(printf '%s' "$matches" | awk '{ c=$0; sub(/^[^:]+:[0-9]+:/, "", c); if (c !~ /guardrails-ok/ && $0 !~ /^[[:space:]]*$/) print }')"
 if [ -n "$leaks" ]; then
   printf '%s\n' "$leaks" | sed -E 's/^([^:]+:[0-9]+:)[[:space:]]*/  \1/'
   hits=$(printf '%s\n' "$leaks" | grep -c .)
