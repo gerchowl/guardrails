@@ -7,6 +7,7 @@ case "${1:-info}" in
     if [ "${2:-}" = "--perf" ]; then shift 2; exec guardrails-trace-report perf "$@"; fi ;;
   last) shift; exec guardrails-trace-report last "$@" ;;
   freshness) shift; exec guardrails-freshness "$@" ;;
+  diffpack) shift; exec guardrails-diffpack "$@" ;;
   *) echo "guardrails: unknown command '$1' (try: guardrails info)" >&2 ;;
 esac
 cat <<'EOF'
@@ -78,6 +79,12 @@ GATE TRACING (opt-in per entry — wrap it):
   guardrails info --perf   per-gate n/p50/p95/fail%/last-fail (+ tier-3 / retire hints)
   guardrails last          the most recent run's verdicts; any FAIL repeats on stderr and
                            exits 1 — a piped/truncated stdout can't swallow a red gate
+
+FRESH-EYES REVIEW (author ≠ reviewer — see CONVENTIONS.md):
+  guardrails diffpack             one reviewable artifact: escape-hatch + gate-config deltas
+                                  first, ADR refs, then the diff — pipe to a fresh-context
+                                  reviewer (agent or human) with refutation framing
+  guardrails diffpack --base origin/main    branch review instead of working tree
 
 FLAKE FRESHNESS (off the hot path — on demand, not on `cd`):
   guardrails freshness            this flake's inputs by lock age (offline)
