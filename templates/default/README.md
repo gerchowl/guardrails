@@ -19,7 +19,9 @@ This brings the toolbelt onto PATH and installs the git hooks. From then on, **c
 - **Escape one line:** append `// guardrails-ok`.
 - **Bypass one commit:** `git commit --no-verify` (sparingly — the point is to not need it).
 - **Tune:** `.pre-commit-config.yaml` (which gates), `deny.toml` (licenses/advisories),
-  `perf-budgets.toml` (perf ceilings). See `guardrails info` for every knob.
+  `perf-budgets.toml` (perf ceilings), `numerical-obligation.toml` (ratcheting quality
+  contracts — parity errors, HARD counts, coverage %, binary size). See `guardrails info`
+  for every knob.
 
 Conventions (the gate/nudge/CI matrix, tracing spine, perf methodology): see
 [`docs/CONVENTIONS.md`](https://github.com/gerchowl/guardrails/blob/main/docs/CONVENTIONS.md).
