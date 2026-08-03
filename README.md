@@ -72,8 +72,11 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
     Security: marker commands run with the same trust as any pre-commit hook in the repo — review
     them like you review `.pre-commit-config.yaml`. **GATE**
   - `adr-matrix` — every **Accepted** ADR is cited in the project's feature/status matrix. Keys on ADR
-    *status* (per the `docs/adr/README.md` index), not edits, so a hand-maintained `FEATURE-MATRIX.md`
-    can't silently drift behind decided designs while Proposed ADRs (roadmap) and typo fixes stay quiet.
+    *status* read from **the ADR files' own `- Status:` headers**, not edits, so a hand-maintained
+    `FEATURE-MATRIX.md` can't silently drift behind decided designs while Proposed ADRs (roadmap) and
+    typo fixes stay quiet. Also enforces unique ADR ids (a duplicate makes every `ADR-NNNN` citation
+    ambiguous) and treats `docs/adr/README.md` as a *derived* index that must list every Accepted ADR
+    with a matching status — the index is checked, never trusted as the input.
     `guardrails-adr-matrix [<adr-index>] [<matrix>]` (auto-discovers both); exempt non-feature decision
     ADRs via `guardrails-adr-exempt.txt` / `$ADR_MATRIX_EXEMPT`. **GATE**
   - `perf-budget` — gate criterion regressions against a checked-in `perf-budgets.toml`. **GATE/NUDGE**

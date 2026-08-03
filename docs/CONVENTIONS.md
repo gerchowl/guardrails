@@ -102,9 +102,19 @@ enough) so UX coverage grows **with** features instead of being retrofitted onto
 
 ## ADR lifecycle hygiene — status integrity, reconcile before flip
 
-The **`adr-matrix`** gate keys on ADR *status*: every **Accepted** ADR must be cited in the project's
-feature/status matrix, so decided designs can't silently outrun the matrix while **Proposed** (roadmap)
-ADRs and typo fixes stay quiet. Two conventions keep that integrity honest:
+The **`adr-matrix`** gate keys on ADR *status*, read from each ADR file's own `- Status:` header:
+every **Accepted** ADR must be cited in the project's feature/status matrix, so decided designs can't
+silently outrun the matrix while **Proposed** (roadmap) ADRs and typo fixes stay quiet.
+
+The gate reads the **files**, not the index, and that distinction is load-bearing. It used to read
+`docs/adr/README.md` — a hand-maintained restatement of the very status it was checking — so an
+Accepted ADR that was never indexed was invisible to it. A consumer repo shipped two Accepted ADRs
+that way, sharing one id, with the matrix citing that id for both documents. **A gate whose input is
+a restatement carries the defect it exists to prevent**; when adding a check, ask what its input
+would have to lie about for the check to pass wrongly. The index is now a derived listing the gate
+*verifies* (present, complete, status agreeing) rather than trusts, and duplicate ids fail outright.
+
+Two conventions keep that integrity honest:
 
 - **Proposed until *validated*, not just written.** An ADR carrying a load-bearing parameter (a threshold,
   an overhead, a measured trade-off) stays **Proposed** until a spike measures it; **Accepted** means
