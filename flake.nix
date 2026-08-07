@@ -4,9 +4,18 @@
   inputs = {
     nixpkgs.url = "nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
+    # Pinned Rust toolchains from a repo's rust-toolchain.toml (mkDevShell's
+    # `rustToolchainFile`). rust-overlay's fromRustupToolchainFile is hash-free +
+    # cross-platform — one file, correct pinned compiler on darwin AND linux, no
+    # per-system sha256 to drift (chosen over fenix for exactly that). The fleet
+    # Rust standard: gerchowl/g-fleet#49.
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -62,6 +71,12 @@
       {
         # Consumers: `guardrails.lib.${system}.mkDevShell { inherit pkgs; extra = [ ... ]; }`
         #   extra : packages to add alongside the toolbelt (your toolchain).
+        #   rustToolchainFile : path to a rust-toolchain.toml → the EXACT pinned Rust
+        #           toolchain (rustc/cargo/components) via rust-overlay, hash-free +
+        #           cross-platform. Prefer this over `extra = [ rustc cargo ]`: it
+        #           honours the repo's declared pin on every OS with no drift. Omit
+        #           to bring your own toolchain via `extra` (the fleet standard,
+        #           gerchowl/g-fleet#49; enabler for gerchowl/strata#1074).
         #   hook  : shell script appended after the guardrails banner (your cheatsheet/exports).
         #   env   : extra mkShell attrs — surfaced as environment variables in the dev shell
         #           (e.g. { PLAYWRIGHT_BROWSERS_PATH = "..."; }). Without this a consumer
@@ -69,10 +84,27 @@
         #   name  : the dev-shell derivation name (defaults to mkShell's "nix-shell").
         lib = {
           inherit gates toolbelt;
-          mkDevShell = { pkgs, extra ? [ ], hook ? "", env ? { }, name ? "nix-shell" }:
+          mkDevShell = { pkgs, extra ? [ ], rustToolchainFile ? null, hook ? "", env ? { }, name ? "nix-shell" }:
+            let
+              # Optional PINNED Rust toolchain from the repo's rust-toolchain.toml,
+              # via rust-overlay (hash-free + cross-platform). Built from a dedicated
+              # rust-overlay-enabled pkgs so a consumer does NOT need the overlay on
+              # its own `pkgs`. Empty when no file is given — then the consumer brings
+              # its own toolchain via `extra` (or relies on the host), as before.
+              rustToolchain =
+                if rustToolchainFile == null then
+                  [ ]
+                else
+                  [
+                    ((import nixpkgs {
+                      inherit system;
+                      overlays = [ rust-overlay.overlays.default ];
+                    }).rust-bin.fromRustupToolchainFile rustToolchainFile)
+                  ];
+            in
             pkgs.mkShell ({
               inherit name;
-              packages = toolbelt ++ extra;
+              packages = rustToolchain ++ toolbelt ++ extra;
               shellHook = ''
                 # Wire the git hooks if a config is present (prek is pre-commit-config compatible),
                 # then wrap prek's hook so it self-bootstraps THIS devShell: merges, worktrees, and
