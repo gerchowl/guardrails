@@ -4,3 +4,6 @@
 [workspace]
 resolver = "2"
 members = ["crates/tunables", "crates/trace"]
+
+[workspace.package]
+license = "Apache-2.0"
