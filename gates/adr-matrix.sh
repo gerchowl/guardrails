@@ -5,6 +5,17 @@
 # This gate keys on ADR **status** (Accepted), NOT on edits, so Proposed ADRs (roadmap) and typo fixes
 # never trip it; only *decided* designs are required to appear.
 #
+# ID WIDTH — 3 OR 4 DIGITS. Both the filename glob and the index-fallback regex used to require
+# FOUR (`NNNN-slug.md`, `\[0[0-9]{3}\]`), which made this gate a silent no-op on every repo that
+# numbers ADRs 001-999: the glob matched no files, the fallback regex matched no rows, and the gate
+# printed its green tick having compared nothing. Measured on gerchowl/strata (84 3-digit ADRs) —
+# pointed at its real index and a FEATURE-MATRIX.md whose entire content was "nothing here at all",
+# it exited 0. The only input it rejected was a matrix file that did not exist.
+#
+# Note why the tests missed it: every fixture in test-adr-matrix.sh was 4-digit too, so the control
+# shared the code's assumption. A test that inherits the blind spot cannot see it. Both widths are
+# now exercised there, including the mixed-width case.
+#
 # SOURCE OF TRUTH — the ADR FILES, not the index. Each `<adr-dir>/NNNN-slug.md` carries its own
 # `- Status: Accepted|Proposed|Superseded by NNNN` header, and that header IS the decision. This
 # gate used to read the *index* (docs/adr/README.md) instead — a hand-maintained restatement of
@@ -47,15 +58,29 @@ is_exempt() { case "$exempt" in *" $1 "*) return 0 ;; esac; return 1; }
 
 adr_dir="$(dirname "$index")"
 
-status_of() { grep -iEm1 '^[^A-Za-z]*Status:' "$1" | sed 's/.*[Ss]tatus:[[:space:]]*//' | tr -d '*'; }
-id_of() { basename "$1" | cut -c1-4; }
+# Accepts `Status:`, `**Status**:`, `- **Status**:` and `## Status:`. The pattern
+# required the colon ADJACENT to the word, so `**Status**: Accepted` — bold closing
+# AFTER the word — did not match and the ADR parsed as having NO status, which the
+# caller reads as "not Accepted". That under-reports silently instead of failing:
+# on gerchowl/strata, 65 of 84 ADRs use the bold spelling, so the gate saw 5
+# Accepted ADRs where there are 43. A parser that cannot read the file it is given
+# must not answer "nothing to require".
+#
+# The trailing trim is load-bearing too: `**Status:** Accepted` strips to `** Accepted`,
+# and `tr -d '*'` leaves a LEADING SPACE, so the caller's `case ... in [Aa]ccepted*)`
+# fell through. Same silent under-report, one space wide.
+status_of() { grep -iEm1 '^[^A-Za-z]*Status[*[:space:]]*:' "$1" | sed -E 's/.*[Ss]tatus[*[:space:]]*:[[:space:]]*//' | tr -d '*' | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//'; }
+# Leading digits up to the first `-`, NOT a fixed 4-char slice: `cut -c1-4` turned
+# `001-arena.md` into the id "001-", so every 3-digit ADR was reported uncited even
+# after the glob was widened — the trailing dash never matched an `ADR-001` citation.
+id_of() { basename "$1" | sed -E 's/^([0-9]+)-.*/\1/'; }
 
 # --- discover the ADR files (the source of truth) -----------------------------
 adr_files=()
 while IFS= read -r f; do
   [ -n "$f" ] && adr_files+=("$f")
 done <<EOF
-$(find "$adr_dir" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9]-*.md' 2>/dev/null | sort)
+$(find "$adr_dir" -maxdepth 1 -type f \( -name '[0-9][0-9][0-9]-*.md' -o -name '[0-9][0-9][0-9][0-9]-*.md' \) 2>/dev/null | sort)
 EOF
 
 if [ "${#adr_files[@]}" -eq 0 ]; then
@@ -63,7 +88,7 @@ if [ "${#adr_files[@]}" -eq 0 ]; then
   echo "guardrails-adr-matrix: no ADR files under $adr_dir — falling back to the index" >&2
   missing=""
   while IFS= read -r line; do
-    num="$(printf '%s' "$line" | grep -oE '\[0[0-9]{3}\]' | head -1 | tr -dc '0-9')" || true
+    num="$(printf '%s' "$line" | grep -oE '\[[0-9]{3,4}\]' | head -1 | tr -dc '0-9')" || true
     [ -n "$num" ] || continue
     printf '%s' "$line" | grep -qi 'Accepted' || continue
     is_exempt "$num" && continue

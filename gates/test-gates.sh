@@ -266,6 +266,50 @@ mod tests {
     fn t() { let x = 3.7; }
 }'
 
+# --- no-hardcoded: const_tunable!/config! exempt the BLOCK, not just the opener ---
+# The header has always documented "is inside a const_tunable!(...) invocation", but the
+# rule only matched the line carrying the macro NAME. Since the macro is necessarily
+# multi-line, the value sits on a different line -- so the gate flagged the very fix it
+# tells you to apply, and a magic number could not be wrapped without also annotating it.
+hard_assert "value inside a multi-line const_tunable! is exempt"   0 -- 'const_tunable!(
+    /// Doc line.
+    const MAX_THING: u32 = 100_000,
+    "description"
+);'
+hard_assert "value inside a path-qualified const_tunable! is exempt" 0 -- 'guardrails_tunables::const_tunable!(
+    /// Doc line.
+    const MAX_THING: u32 = 100_000,
+    "description"
+);'
+hard_assert "multi-line config! is exempt too"                     0 -- 'config!(
+    const LIMIT: u32 = 500,
+    "description"
+);'
+# THE CONTROL THAT MATTERS: if the paren depth never returns to zero, everything after
+# the first const_tunable! goes unscanned to EOF -- the exact shape of the intest bug
+# fixed above. A bare value AFTER the block must still be caught.
+hard_assert "prod value AFTER a const_tunable! block is flagged"    1 -- 'const_tunable!(
+    const MAX_THING: u32 = 100_000,
+    "description"
+);
+let n = 500;'
+hard_assert "value between two const_tunable! blocks is flagged"    1 -- 'const_tunable!(
+    const A: u32 = 100_000,
+    "a"
+);
+let n = 500;
+const_tunable!(
+    const B: u32 = 100_000,
+    "b"
+);'
+# A close-paren inside a doc comment or string must not end the block early, or the
+# depth counter closes on the wrong line and the real value leaks through.
+hard_assert "close-paren in a doc comment does not end the block"   0 -- 'const_tunable!(
+    /// Mentions a paren pair (like this) mid-sentence.
+    const MAX_THING: u32 = 100_000,
+    "description (with parens) inside"
+);'
+
 # --- no-hardcoded: baseline ratchet mode (issue #30) ---------------------------
 # A committed per-file count snapshot flips the gate to enforce-on-growth /
 # nudge-on-burn-down / silent-at-baseline; --record-baseline only ever tightens.
