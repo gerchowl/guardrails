@@ -96,6 +96,30 @@ for f in "${files[@]:-}"; do
     /guardrails-ok-begin|hardcode-ok-begin/ { inblock = 1; next }   # block escape: exempt until -end
     /guardrails-ok-end|hardcode-ok-end/     { inblock = 0; next }
     inblock { next }
+    # `const_tunable!(...)` / `config!(...)` are the SANCTIONED home for a magic value,
+    # and the macro is necessarily multi-line -- the value sits on a DIFFERENT line from
+    # the macro name. Matching only the opener therefore exempted the macro line and
+    # flagged the value line, i.e. it flagged the very fix this gate recommends. The
+    # header has always documented block scope ("is inside a const_tunable!(...)
+    # invocation"); this makes the code agree. Paren-depth tracked on a
+    # string/comment-stripped copy so a close-paren inside a doc comment or string
+    # literal cannot end the block early.
+    intunable {
+      tbody = $0
+      sub(/\/\/.*/, "", tbody)
+      gsub(/"[^"]*"/, "", tbody)
+      tundepth += gsub(/\(/, "", tbody) - gsub(/\)/, "", tbody)
+      if (tundepth <= 0) intunable = 0
+      next
+    }
+    /const_tunable!\(|config!\(/ {
+      tbody = $0
+      sub(/\/\/.*/, "", tbody)
+      gsub(/"[^"]*"/, "", tbody)
+      tundepth = gsub(/\(/, "", tbody) - gsub(/\)/, "", tbody)
+      if (tundepth > 0) intunable = 1
+      next
+    }
     /const_tunable!|config!|guardrails-ok|hardcode-ok/ { next }
     {
       line = $0
