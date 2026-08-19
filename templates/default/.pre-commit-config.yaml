@@ -57,6 +57,12 @@ repos:
         language: system
         files: ^\.github/workflows/.*\.ya?ml$
         pass_filenames: true
+      - id: hot-info
+        name: no info!/warn! on a per-iteration path (nudge)
+        entry: guardrails-trace hot-info -- guardrails-hot-info
+        language: system
+        files: \.rs$
+        pass_filenames: true
       - id: duplication
         name: no reinvented clones (nudge)
         entry: guardrails-trace duplication -- guardrails-duplication
