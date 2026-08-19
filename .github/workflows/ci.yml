@@ -19,6 +19,20 @@ jobs:
       - name: gate tests
         run: ./gates/test-gates.sh && ./gates/test-adr-matrix.sh
 
+  # The gates ship as bash scripts a consumer may run under ANY bash. ubuntu-latest is bash 5,
+  # which does not reproduce the stock-macOS bash 3.2 `set -u` empty-array error (#57) — and
+  # BASH_COMPAT=3.2 / `shopt -s compat32` do not restore it. This runner has /bin/bash 3.2.57,
+  # so the conformance block in test-gates.sh actually executes its bash-3.x probe here. No nix:
+  # the harness is pure bash + git + python3 on purpose, and this job must stay cheap.
+  portability:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash version
+        run: /bin/bash --version | head -1
+      - name: gate tests (stock macOS bash on PATH for the gates)
+        run: ./gates/test-gates.sh && ./gates/test-adr-matrix.sh
+
       # Tunables crate: tests + the registry must be regenerated and committed (can't drift).
       - name: tunables tests
         run: nix develop -c bash -c 'cd crates/tunables && cargo test'

@@ -1417,6 +1417,118 @@ pub fn emit_x() {}'
 de_assert "findings are a NUDGE by default (exit 0)"   0 -- '// guardrails:events
 pub fn emit_x() {}'
 
+# =============================================================================================
+# CROSS-GATE CONFORMANCE MATRIX (issue #55) — pin the INVARIANT, not the code.
+#
+# #55 asked whether to extract the duplicated files()/allowed_file()/guardrails-ok preamble. The
+# answer stayed NO (see docs/CONVENTIONS.md §"Duplication with a conformance matrix"), so what
+# has to exist instead is a matrix every copy is checked against — because #57 proved the real
+# cost of the duplication: hot-info.sh carried the bash-3.2 fix WITH a comment explaining the
+# hazard, while two sibling copies still crashed. A per-gate, hand-written test did not catch
+# that; a table where a new gate is enrolled by adding ONE ROW does.
+#
+# Row: <gate-script> <glob-env-var> <extra-env-to-force-enforcement> <fixture>
+# =============================================================================================
+conf_rows=(
+  "no-debug-leftovers.sh|GUARDRAILS_OUTPUT_GLOBS|GUARDRAILS_CONF_NOOP=1|fn f() { println!(\"x\"); }"
+  "no-raw-trace-fields.sh|GUARDRAILS_TRACE_ALLOW_GLOBS|GUARDRAILS_CONF_NOOP=1|fn f() { info!(?user); }"
+  "hot-info.sh|GUARDRAILS_HOTINFO_ALLOW|GUARDRAILS_HOTINFO_ENFORCE=1|fn f() { loop { info!(\"t\"); } }"
+)
+
+conf_root="$tmp/conf"
+for row in "${conf_rows[@]}"; do
+  IFS='|' read -r cg cvar cenf cfix <<< "$row"
+  cgate="$here/$cg"
+  rm -rf "$conf_root"; mkdir -p "$conf_root/vendored" "$conf_root/src/vendored"
+  printf '%s\n' "$cfix" > "$conf_root/vendored/gen.rs"
+  cp "$conf_root/vendored/gen.rs" "$conf_root/src/vendored/gen.rs"
+
+  # (i) The fixture must actually be CAUGHT with no glob set. Without this, every assertion
+  #     below passes vacuously on a gate that flags nothing at all.
+  ( cd "$conf_root" && env "$cenf" "$cgate" ./vendored/gen.rs >/dev/null 2>&1 )
+  if [ $? = 1 ]; then echo "ok    — [$cg] fixture is caught with no glob set"
+  else echo "FAIL  — [$cg] fixture NOT caught — the rows below prove nothing"; fails=$((fails + 1)); fi
+
+  # (ii)+(iii) The ./-prefix normalization: dir-walk mode prefixes every path with `./`, so a
+  #     configured glob WITHOUT a leading `*` must still match. A gate that gets this wrong
+  #     silently no-ops its allow-glob — the knob looks wired and does nothing.
+  ( cd "$conf_root" && env "$cenf" "$cvar=vendored/*" "$cgate" ./vendored/gen.rs >/dev/null 2>&1 )
+  if [ $? = 0 ]; then echo "ok    — [$cg] glob without a leading * matches a ./-prefixed path"
+  else echo "FAIL  — [$cg] ./-prefix normalization missing"; fails=$((fails + 1)); fi
+  ( cd "$conf_root" && env "$cenf" "$cvar=*/vendored/*" "$cgate" ./src/vendored/gen.rs >/dev/null 2>&1 )
+  if [ $? = 0 ]; then echo "ok    — [$cg] glob with a leading * matches a nested path"
+  else echo "FAIL  — [$cg] leading-* glob broken"; fails=$((fails + 1)); fi
+
+  # (iv) An EMPTY knob must neither crash nor allow everything. `IFS=: read -ra a <<< ""` yields
+  #      an empty array, and `:`-boundary empties ("a::b") must not glob-match every path.
+  ( cd "$conf_root" && env "$cenf" "$cvar=" "$cgate" ./vendored/gen.rs >/dev/null 2>&1 )
+  if [ $? = 1 ]; then echo "ok    — [$cg] an empty glob knob does not allow everything"
+  else echo "FAIL  — [$cg] an empty glob knob swallowed the finding"; fails=$((fails + 1)); fi
+done
+
+# --- bash 3.2 empty-array hazard (issue #57): a SHAPE lint, not a behaviour probe -------------
+# `set -u` + an EMPTY array: bash 3.2 (stock macOS /bin/bash, 3.2.57) errors on "${arr[@]}";
+# bash 5 does not — which is why `#!/usr/bin/env bash` hid this everywhere a Nix/Homebrew bash
+# was on PATH, and why CI (ubuntu, bash 5) could never see it. `BASH_COMPAT=3.2` and
+# `shopt -s compat32` do NOT restore the old behaviour, so a behaviour probe is unrunnable on
+# the CI runner. The invariant is therefore checked STRUCTURALLY, on any bash: every array built
+# by `read -ra` (the only ones here that can legitimately be empty) must be expanded through a
+# guard — `${a[@]+"${a[@]}"}` or `"${a[@]:-}"` — at every site.
+#
+# This is also the answer to "a behaviour test can pass vacuously": an early-return that skips
+# the loop would satisfy a runtime probe while leaving the unguarded expansion in place. A shape
+# lint cannot be satisfied vacuously.
+unguarded="$(
+  for g in "$here"/*.sh; do
+    case "$(basename "$g")" in test-*) continue ;; esac
+    awk -v F="$(basename "$g")" '
+      match($0, /read[[:space:]]+-r?a[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/) {
+        seg = substr($0, RSTART, RLENGTH); sub(/^.*[[:space:]]/, "", seg); arr[seg] = 1
+      }
+      { line[NR] = $0 }
+      END {
+        for (n in arr) {
+          guarded = "${" n "[@]+\"${" n "[@]}\"}"
+          bare    = "\"${" n "[@]}\""
+          for (i = 1; i <= NR; i++) {
+            s = line[i]
+            while ((p = index(s, guarded)) > 0) s = substr(s, 1, p - 1) substr(s, p + length(guarded))
+            if (index(s, bare) > 0) printf "%s:%d: %s\n", F, i, n
+          }
+        }
+      }
+    ' "$g"
+  done
+)"
+if [ -z "$unguarded" ]; then
+  echo "ok    — every read -ra array is expanded through a bash-3.2-safe guard"
+else
+  echo "FAIL  — unguarded \"\${arr[@]}\" (crashes stock bash 3.2 under set -u):"
+  printf '%s\n' "$unguarded" | sed 's/^/        /'
+  fails=$((fails + 1))
+fi
+
+# Belt to that suspender: if a real bash 3.x is on this host (macOS ships one at /bin/bash),
+# run every gate through it with an EMPTY environment — the reproducer from #57 verbatim.
+b32=""
+for cand in /bin/bash /usr/bin/bash; do
+  [ -x "$cand" ] || continue
+  case "$("$cand" -c 'echo $BASH_VERSION' 2>/dev/null)" in 3.*) b32="$cand"; break ;; esac
+done
+if [ -z "$b32" ]; then
+  echo "skip  — no bash 3.x on this host; the shape lint above is the portable check"
+else
+  mkdir -p "$tmp/b32"; printf 'fn f() { info!("x"); println!("y"); }\n' > "$tmp/b32/c.rs"
+  b32_bad=""
+  for g in "$here"/*.sh; do
+    case "$(basename "$g")" in test-*|protect-trunk*) continue ;; esac  # protect-trunk-push reads stdin
+    o="$(env -i PATH=/usr/bin:/bin HOME="$tmp" "$b32" "$g" "$tmp/b32/c.rs" 2>&1 </dev/null)"
+    case "$o" in *"unbound variable"*) b32_bad="$b32_bad $(basename "$g")" ;; esac
+  done
+  if [ -z "$b32_bad" ]; then echo "ok    — every gate runs under bash 3.x with an empty environment"
+  else echo "FAIL  — gate(s) crash on bash 3.x:$b32_bad"; fails=$((fails + 1)); fi
+fi
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2
