@@ -50,7 +50,8 @@ allowed_file() {
   # /bin/bash is the interpreter.
   for g in ${allow_globs[@]+"${allow_globs[@]}"}; do
     [ -n "$g" ] || continue
-    # shellcheck disable=SC2254 -- $g is intentionally a glob pattern
+    # $g is intentionally a glob pattern for case-matching
+    # shellcheck disable=SC2254
     case "$1" in $g) return 0 ;; esac
   done
   return 1
