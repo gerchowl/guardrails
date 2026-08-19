@@ -16,7 +16,7 @@ assert() {
   local env=()
   while [ "$1" != "--" ]; do env+=("$1"); shift; done
   shift
-  env "${env[@]}" "$debug_gate" "$1" >/dev/null 2>&1
+  env ${env[@]+"${env[@]}"} "$debug_gate" "$1" >/dev/null 2>&1
   local got=$?
   if [ "$got" = "$want" ]; then
     echo "ok    — $desc"
@@ -202,7 +202,7 @@ hard_assert() { # desc, want-exit, env(or --), file-content
   while [ "$1" != "--" ]; do env+=("$1"); shift; done
   shift
   printf '%s\n' "$1" > "$tmp/src/hard.rs"
-  env "${env[@]}" "$hard_gate" "$tmp/src/hard.rs" >/dev/null 2>&1
+  env ${env[@]+"${env[@]}"} "$hard_gate" "$tmp/src/hard.rs" >/dev/null 2>&1
   if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
 }
 hard_assert "bad float flagged even with allowed 0.0 on the line" 1 -- 'let a = 0.0; let b = 3.7;'
@@ -319,7 +319,7 @@ rat_run() { # env..., --, args... (gate run from $rroot; returns gate exit)
   local envs=()
   while [ "$1" != "--" ]; do envs+=("$1"); shift; done
   shift
-  ( cd "$rroot" && env GUARDRAILS_HARDCODED_BASELINE="$rbl" "${envs[@]}" "$hard_gate" "$@" )
+  ( cd "$rroot" && env GUARDRAILS_HARDCODED_BASELINE="$rbl" ${envs[@]+"${envs[@]}"} "$hard_gate" "$@" )
 }
 rat_check() { # desc, want-exit, got-exit
   if [ "$3" = "$2" ]; then echo "ok    — ratchet: $1"
@@ -478,7 +478,7 @@ trace_assert() { # desc, want-exit, env(or --), file-content
   while [ "$1" != "--" ]; do env+=("$1"); shift; done
   shift
   printf '%s\n' "$1" > "$tmp/src/trace.rs"
-  env "${env[@]}" "$trace_gate" "$tmp/src/trace.rs" >/dev/null 2>&1
+  env ${env[@]+"${env[@]}"} "$trace_gate" "$tmp/src/trace.rs" >/dev/null 2>&1
   if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
 }
 trace_assert "info!(name = ?val) is flagged"             1 -- 'fn f() { info!(user = ?user); }'
@@ -691,7 +691,7 @@ dup_assert() {
   local env=()
   while [ "$1" != "--" ]; do env+=("$1"); shift; done
   shift
-  env "${env[@]}" "$dup_gate" "$1" >/dev/null 2>&1
+  env ${env[@]+"${env[@]}"} "$dup_gate" "$1" >/dev/null 2>&1
   local got=$?
   if [ "$got" = "$want" ]; then echo "ok    — $desc"
   else echo "FAIL  — $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
@@ -804,7 +804,7 @@ pt_assert() { # desc, want-exit, env-assignments..., -- (runs gate inside $ptr)
   local desc="$1" want="$2"; shift 2
   local envs=()
   while [ "$1" != "--" ]; do envs+=("$1"); shift; done
-  ( cd "$ptr" && env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES "${envs[@]}" "$pt_gate" >/dev/null 2>&1 )
+  ( cd "$ptr" && env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES ${envs[@]+"${envs[@]}"} "$pt_gate" >/dev/null 2>&1 )
   local got=$?
   if [ "$got" = "$want" ]; then echo "ok    — protect-trunk: $desc"
   else echo "FAIL  — protect-trunk: $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
@@ -861,7 +861,7 @@ ptp_assert() { # desc, want-exit, env-assignments..., --, stdin-lines...
   local envs=()
   while [ "$1" != "--" ]; do envs+=("$1"); shift; done
   shift
-  printf '%s\n' "$@" | env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES -u PRE_COMMIT_REMOTE_BRANCH -u GUARDRAILS_TRUNK_MERGE_GATE -u GUARDRAILS_TRUNK_MERGE_CMD "${envs[@]}" "$ptp_gate" >/dev/null 2>&1
+  printf '%s\n' "$@" | env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES -u PRE_COMMIT_REMOTE_BRANCH -u GUARDRAILS_TRUNK_MERGE_GATE -u GUARDRAILS_TRUNK_MERGE_CMD ${envs[@]+"${envs[@]}"} "$ptp_gate" >/dev/null 2>&1
   local got=$?
   if [ "$got" = "$want" ]; then echo "ok    — protect-trunk-push: $desc"
   else echo "FAIL  — protect-trunk-push: $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
@@ -1041,7 +1041,7 @@ hot_assert() { # desc, want-exit, env(or --), file-content
   while [ "$1" != "--" ]; do env+=("$1"); shift; done
   shift
   printf '%s\n' "$1" > "$tmp/hot/h.rs"
-  env "${env[@]}" "$hot_gate" "$tmp/hot/h.rs" >/dev/null 2>&1
+  env ${env[@]+"${env[@]}"} "$hot_gate" "$tmp/hot/h.rs" >/dev/null 2>&1
   if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
 }
 # NOTE: default mode is a NUDGE (exit 0 even on hits), so catch-cases assert under ENFORCE=1.
@@ -1333,7 +1333,7 @@ de_assert() {
   rm -rf "$de_root"; mkdir -p "$de_root/src"
   printf '%s\n' "$1" > "$de_root/src/facade.rs"
   printf '%s\n' "${2:-}" > "$de_root/src/app.rs"
-  ( cd "$de_root" && env "${env[@]}" "$de_gate" . >/dev/null 2>&1 )
+  ( cd "$de_root" && env ${env[@]+"${env[@]}"} "$de_gate" . >/dev/null 2>&1 )
   local got=$?
   if [ "$got" = "$want" ]; then echo "ok    — $desc"
   else echo "FAIL  — $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
@@ -1478,16 +1478,34 @@ done
 # This is also the answer to "a behaviour test can pass vacuously": an early-return that skips
 # the loop would satisfy a runtime probe while leaving the unguarded expansion in place. A shape
 # lint cannot be satisfied vacuously.
+#
+# Scope, stated so the gap is visible rather than assumed away: the lint tracks arrays built by
+# `read -ra` and by a bare `name=()`, because those are the two that are EMPTY in the normal case.
+# It deliberately accepts a count guard (`[ "${#a[@]}" -gt 0 ]` — legal on bash 3.2) as sufficient,
+# since that is the idiom for accumulator arrays. THE HARNESSES ARE LINTED TOO: the macOS CI job
+# caught `env "${env[@]}"` crashing right here in test-gates.sh, in code whose whole job is to
+# police that class. A lint that exempts itself is how that happened.
 unguarded="$(
   for g in "$here"/*.sh; do
-    case "$(basename "$g")" in test-*) continue ;; esac
     awk -v F="$(basename "$g")" '
+      /^[[:space:]]*#/ { line[NR] = ""; next }        # a comment quoting the pattern is not code
       match($0, /read[[:space:]]+-r?a[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/) {
         seg = substr($0, RSTART, RLENGTH); sub(/^.*[[:space:]]/, "", seg); arr[seg] = 1
+      }
+      match($0, /(^|[[:space:]])(local[[:space:]]+|declare[[:space:]]+-a[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=\(\)/) {
+        seg = substr($0, RSTART, RLENGTH); sub(/=\(\)$/, "", seg); sub(/^.*[[:space:]]/, "", seg); arr[seg] = 1
+      }
+      /\$\{#[A-Za-z_][A-Za-z0-9_]*\[@\]\}/ {           # a count guard makes the array safe to expand
+        s2 = $0
+        while (match(s2, /\$\{#[A-Za-z_][A-Za-z0-9_]*\[@\]\}/)) {
+          nm = substr(s2, RSTART + 3, RLENGTH - 7); guardedby[nm] = 1
+          s2 = substr(s2, RSTART + RLENGTH)
+        }
       }
       { line[NR] = $0 }
       END {
         for (n in arr) {
+          if (n in guardedby) continue
           guarded = "${" n "[@]+\"${" n "[@]}\"}"
           bare    = "\"${" n "[@]}\""
           for (i = 1; i <= NR; i++) {
@@ -1501,7 +1519,7 @@ unguarded="$(
   done
 )"
 if [ -z "$unguarded" ]; then
-  echo "ok    — every read -ra array is expanded through a bash-3.2-safe guard"
+  echo "ok    — every possibly-empty array is expanded through a bash-3.2-safe guard"
 else
   echo "FAIL  — unguarded \"\${arr[@]}\" (crashes stock bash 3.2 under set -u):"
   printf '%s\n' "$unguarded" | sed 's/^/        /'

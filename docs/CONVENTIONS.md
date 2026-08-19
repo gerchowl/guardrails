@@ -125,8 +125,15 @@ by adding **one row**. Two properties make this more than a rename of the old pe
 - **Shape, where behaviour can't reach.** The bash-3.2 hazard is invisible to a behaviour probe on
   bash 5 (`BASH_COMPAT=3.2` and `shopt -s compat32` do *not* restore the `set -u` empty-array
   error), and a "helpful" early return would satisfy a runtime probe while leaving the unguarded
-  expansion in place. So it is checked **structurally** on any bash: every array built by
-  `read -ra` must be expanded through `${a[@]+"${a[@]}"}` or `"${a[@]:-}"` at every site.
+  expansion in place. So it is checked **structurally** on any bash: every array that can be empty
+  — built by `read -ra`, or by a bare `name=()` — must be expanded through `${a[@]+"${a[@]}"}` or
+  `"${a[@]:-}"`, or be count-guarded, at every site.
+
+**The lint must not exempt itself.** The first version skipped `test-*.sh`, and the macOS job caught
+`env "${env[@]}"` crashing in `test-gates.sh` on its first run — in the harness whose job is to
+police exactly that. Cost of the whole portability job: one runner, seven seconds, one real bug on
+day one. A behaviour probe and a shape lint are complements, not alternatives: the probe found what
+the lint's scope excluded, and the lint finds what no bash-5 probe can execute.
 
 Generalizes: when N copies must agree, the cheap enforcement is a table that fails if one drifts —
 not a shared module that each copy re-implements around.
