@@ -18,6 +18,7 @@ rest, run deep checks async.* This doc is the contract; `flake.nix` ships the to
 | no-raw-trace-fields (`?`/`%` outside the schema file) | PII/secret leak into the audit JSONL | **GATE** |
 | hot-info (`info!`/`warn!` on a per-iteration path) | level-vs-frequency drift: the audit trail becomes a fire hose | **NUDGE** |
 | log-budget (`max_pct` / `require` over a real JSONL log) | an event drowning the stream, **and** an operation that logs nothing | **GATE/NUDGE** |
+| dead-event (a declared `guardrails:events` emitter with no call site) | an event family written, documented, levelled — and never wired up | **NUDGE** |
 | doc-tests (doctest / trycmd / `mdbook test`) | examples & CLI output drift from real behaviour | **CONVENTION** (consumer-wired, see below) |
 | gitleaks | committed secrets | **GATE** |
 | rustfmt --check, clippy -D warnings | drift from baseline | **GATE** |
@@ -48,11 +49,23 @@ nobody wrote) is structurally invisible to it. Absence becomes checkable only wh
 | adr-matrix | ADR index rows marked *Accepted* | `ADR-NNNN` appears in the status matrix |
 | derived-docs | regions declaring a generator command | region matches that command's output |
 | log-budget | events declared under `[require]` | event appears in a captured log |
+| dead-event | `pub` fns inside a `guardrails:events` region | the name is referenced outside its own definition |
 
 When you want to gate an absence, the design question is therefore never "how do I detect the
 missing thing" — it is **"what declares the population?"** If nothing does, either introduce the
 declaration (a manifest, a marker, a budgets file) and accept that it is hand-maintained one level
 up, or don't ship the gate. A source tree does not enumerate its own obligations.
+
+**A repurposed exclusion list is not a declaration.** `dead-event` (#56) was first specified to
+find its population by reusing `GUARDRAILS_TRACE_ALLOW_GLOBS` — the path globs `no-raw-trace-fields`
+already uses to *exclude* the schema surface. Same file, so it looks free. It fails on all three
+counts: it is an exclusion list read as an inclusion list (a reviewer editing one gate silently
+retargets the other), it silently skips every repo that has not set it, and it captures every
+unrelated `pub fn` that happens to share the file. The honest form costs one author-placed line —
+`// guardrails:events` on the facade, or a `-begin`/`-end` region — which is diff-visible intent,
+self-locating (no env var, no cross-gate coupling), and scopes exactly. **Test: would the
+declaration still be there if the other gate were deleted?** If not, it is a coincidence, not a
+population.
 
 ## Soft-gate tiers — when a check runs is a design axis too
 
