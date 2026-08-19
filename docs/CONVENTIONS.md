@@ -16,6 +16,8 @@ rest, run deep checks async.* This doc is the contract; `flake.nix` ships the to
 | adr-matrix (every Accepted ADR cited in the status matrix) | decided designs outrun the feature/status matrix | **GATE** |
 | no-conflict-markers | committed merge-conflict debris | **GATE** |
 | no-raw-trace-fields (`?`/`%` outside the schema file) | PII/secret leak into the audit JSONL | **GATE** |
+| hot-info (`info!`/`warn!` on a per-iteration path) | level-vs-frequency drift: the audit trail becomes a fire hose | **NUDGE** |
+| log-budget (`max_pct` / `require` over a real JSONL log) | an event drowning the stream, **and** an operation that logs nothing | **GATE/NUDGE** |
 | doc-tests (doctest / trycmd / `mdbook test`) | examples & CLI output drift from real behaviour | **CONVENTION** (consumer-wired, see below) |
 | gitleaks | committed secrets | **GATE** |
 | rustfmt --check, clippy -D warnings | drift from baseline | **GATE** |
@@ -35,6 +37,22 @@ Hard-gate deterministic high-confidence; nudge probabilistic/tunable; run slow/d
 
 **Avoid (noise traps):** coverage-% targets (gamed → use diff-coverage + mutants), cyclomatic
 thresholds, naming/line-length dogma (formatter's job), any *probabilistic* check as a hard gate.
+
+**Presence is greppable; absence is not.** Almost every gate here scans for a forbidden token in a
+file that exists, so it can only ever catch what IS there — a whole class of defect (the thing
+nobody wrote) is structurally invisible to it. Absence becomes checkable only when you can
+**enumerate what should have been there**, and then require a projection of it:
+
+| Gate | Enumerable population | Required projection |
+|---|---|---|
+| adr-matrix | ADR index rows marked *Accepted* | `ADR-NNNN` appears in the status matrix |
+| derived-docs | regions declaring a generator command | region matches that command's output |
+| log-budget | events declared under `[require]` | event appears in a captured log |
+
+When you want to gate an absence, the design question is therefore never "how do I detect the
+missing thing" — it is **"what declares the population?"** If nothing does, either introduce the
+declaration (a manifest, a marker, a budgets file) and accept that it is hand-maintained one level
+up, or don't ship the gate. A source tree does not enumerate its own obligations.
 
 ## Soft-gate tiers — when a check runs is a design axis too
 
