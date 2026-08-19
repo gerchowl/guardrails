@@ -16,7 +16,7 @@ fails=0
 chk() {
   local desc="$1" want="$2"; shift 2
   local e=(); while [ "$1" != "--" ]; do e+=("$1"); shift; done; shift
-  env "${e[@]}" "$gate" "$1" "$2" >/dev/null 2>&1
+  env ${e[@]+"${e[@]}"} "$gate" "$1" "$2" >/dev/null 2>&1
   local got=$?
   if [ "$got" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc (want $want got $got)"; fails=$((fails + 1)); fi
 }

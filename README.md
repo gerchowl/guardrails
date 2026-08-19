@@ -64,6 +64,14 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
     false positive here would age into a hard block on correct code. Known limit: it sees *lexical*
     nesting, not call frequency — a logging **facade** hides the loop from it. `log-budget` is the
     instrument that catches that; the two are complementary. **NUDGE**
+  - `dead-event` — a **declared** event emitter with zero call sites. The cheap, log-free slice of
+    the absence problem `log-budget` solves late: mark the logging facade `// guardrails:events`
+    (or a `-begin`/`-end` region) and every `pub`-visible `fn` in it must be referenced somewhere
+    outside its own definition. Catches an event family written, documented, levelled — and never
+    wired up (invisible by review in a ~4800-line facade). The marker is the point: a repurposed
+    allow-glob from another gate would be a coincidence, not a declared population. No marker →
+    skips, so adopting costs nothing. A `tests/`-only caller counts as dead *on purpose*. **NUDGE**
+    (promote with `GUARDRAILS_DEADEVENT_ENFORCE=1`).
   - `no-commented-code` — commented-out code graveyards. **GATE**
   - `no-hardcoded` — magic values that should be tunables (`src/` only; bless prefixes in
     `guardrails-allow.txt`; token-level floats, underscored ints, `/Users//home//tmp` paths checked

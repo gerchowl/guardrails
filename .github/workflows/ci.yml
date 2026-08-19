@@ -27,3 +27,25 @@ jobs:
           nix develop -c bash -c 'cd crates/tunables && cargo run --quiet --example gpu_bench'
           git diff --exit-code crates/tunables/TUNABLES.md \
             || { echo "::error:: TUNABLES.md is stale — run: (cd crates/tunables && cargo run --example gpu_bench) and commit"; exit 1; }
+
+  # The gates ship as bash scripts a consumer may run under ANY bash. ubuntu-latest is bash 5,
+  # which does not reproduce the stock-macOS bash 3.2 `set -u` empty-array error (#57) — and
+  # BASH_COMPAT=3.2 / `shopt -s compat32` do not restore it. This runner has /bin/bash 3.2.57
+  # and no bash 4+ on PATH, so `#!/usr/bin/env bash` resolves to 3.2 and the harness runs there
+  # for real. No nix: test-conformance.sh is pure bash + git on purpose, and this job stays cheap
+  # (it paid for itself on its first run — it caught gates/duplication.sh failing to PARSE under
+  # bash 3.2, plus the same empty-array crash inside gates/test-gates.sh itself).
+  #
+  # It runs test-conformance.sh ALONE, not the full suite: tools/nudge-ledger.sh needs bash 4
+  # associative arrays, so the whole of test-gates.sh reports ~26 "this host has no bash 4"
+  # failures that would bury the real portability findings. The portability CONTRACT is narrower
+  # and stated here: every gate and tool must PARSE under bash 3.x, and every gate must RUN there
+  # with an empty environment. Behavioural depth stays on the ubuntu job.
+  portability:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash version
+        run: /bin/bash --version | head -1
+      - name: cross-gate conformance under stock bash 3.2
+        run: ./gates/test-conformance.sh

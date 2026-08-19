@@ -16,7 +16,7 @@ assert() {
   local env=()
   while [ "$1" != "--" ]; do env+=("$1"); shift; done
   shift
-  env "${env[@]}" "$debug_gate" "$1" >/dev/null 2>&1
+  env ${env[@]+"${env[@]}"} "$debug_gate" "$1" >/dev/null 2>&1
   local got=$?
   if [ "$got" = "$want" ]; then
     echo "ok    — $desc"
@@ -202,7 +202,7 @@ hard_assert() { # desc, want-exit, env(or --), file-content
   while [ "$1" != "--" ]; do env+=("$1"); shift; done
   shift
   printf '%s\n' "$1" > "$tmp/src/hard.rs"
-  env "${env[@]}" "$hard_gate" "$tmp/src/hard.rs" >/dev/null 2>&1
+  env ${env[@]+"${env[@]}"} "$hard_gate" "$tmp/src/hard.rs" >/dev/null 2>&1
   if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
 }
 hard_assert "bad float flagged even with allowed 0.0 on the line" 1 -- 'let a = 0.0; let b = 3.7;'
@@ -319,7 +319,7 @@ rat_run() { # env..., --, args... (gate run from $rroot; returns gate exit)
   local envs=()
   while [ "$1" != "--" ]; do envs+=("$1"); shift; done
   shift
-  ( cd "$rroot" && env GUARDRAILS_HARDCODED_BASELINE="$rbl" "${envs[@]}" "$hard_gate" "$@" )
+  ( cd "$rroot" && env GUARDRAILS_HARDCODED_BASELINE="$rbl" ${envs[@]+"${envs[@]}"} "$hard_gate" "$@" )
 }
 rat_check() { # desc, want-exit, got-exit
   if [ "$3" = "$2" ]; then echo "ok    — ratchet: $1"
@@ -478,7 +478,7 @@ trace_assert() { # desc, want-exit, env(or --), file-content
   while [ "$1" != "--" ]; do env+=("$1"); shift; done
   shift
   printf '%s\n' "$1" > "$tmp/src/trace.rs"
-  env "${env[@]}" "$trace_gate" "$tmp/src/trace.rs" >/dev/null 2>&1
+  env ${env[@]+"${env[@]}"} "$trace_gate" "$tmp/src/trace.rs" >/dev/null 2>&1
   if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
 }
 trace_assert "info!(name = ?val) is flagged"             1 -- 'fn f() { info!(user = ?user); }'
@@ -691,7 +691,7 @@ dup_assert() {
   local env=()
   while [ "$1" != "--" ]; do env+=("$1"); shift; done
   shift
-  env "${env[@]}" "$dup_gate" "$1" >/dev/null 2>&1
+  env ${env[@]+"${env[@]}"} "$dup_gate" "$1" >/dev/null 2>&1
   local got=$?
   if [ "$got" = "$want" ]; then echo "ok    — $desc"
   else echo "FAIL  — $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
@@ -804,7 +804,7 @@ pt_assert() { # desc, want-exit, env-assignments..., -- (runs gate inside $ptr)
   local desc="$1" want="$2"; shift 2
   local envs=()
   while [ "$1" != "--" ]; do envs+=("$1"); shift; done
-  ( cd "$ptr" && env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES "${envs[@]}" "$pt_gate" >/dev/null 2>&1 )
+  ( cd "$ptr" && env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES ${envs[@]+"${envs[@]}"} "$pt_gate" >/dev/null 2>&1 )
   local got=$?
   if [ "$got" = "$want" ]; then echo "ok    — protect-trunk: $desc"
   else echo "FAIL  — protect-trunk: $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
@@ -861,7 +861,7 @@ ptp_assert() { # desc, want-exit, env-assignments..., --, stdin-lines...
   local envs=()
   while [ "$1" != "--" ]; do envs+=("$1"); shift; done
   shift
-  printf '%s\n' "$@" | env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES -u PRE_COMMIT_REMOTE_BRANCH -u GUARDRAILS_TRUNK_MERGE_GATE -u GUARDRAILS_TRUNK_MERGE_CMD "${envs[@]}" "$ptp_gate" >/dev/null 2>&1
+  printf '%s\n' "$@" | env -u CI -u GITHUB_ACTIONS -u GUARDRAILS_ALLOW_TRUNK -u GUARDRAILS_PROTECTED_BRANCHES -u PRE_COMMIT_REMOTE_BRANCH -u GUARDRAILS_TRUNK_MERGE_GATE -u GUARDRAILS_TRUNK_MERGE_CMD ${envs[@]+"${envs[@]}"} "$ptp_gate" >/dev/null 2>&1
   local got=$?
   if [ "$got" = "$want" ]; then echo "ok    — protect-trunk-push: $desc"
   else echo "FAIL  — protect-trunk-push: $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
@@ -1041,7 +1041,7 @@ hot_assert() { # desc, want-exit, env(or --), file-content
   while [ "$1" != "--" ]; do env+=("$1"); shift; done
   shift
   printf '%s\n' "$1" > "$tmp/hot/h.rs"
-  env "${env[@]}" "$hot_gate" "$tmp/hot/h.rs" >/dev/null 2>&1
+  env ${env[@]+"${env[@]}"} "$hot_gate" "$tmp/hot/h.rs" >/dev/null 2>&1
   if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
 }
 # NOTE: default mode is a NUDGE (exit 0 even on hits), so catch-cases assert under ENFORCE=1.
@@ -1317,6 +1317,160 @@ if [ "$l1" = "$l2" ] && printf '%s' "$l1" | grep -q 'client.tick: 80.0% of 10 re
   echo "ok    — log-budget report is deterministic AND correct"
 else echo "FAIL  — log-budget report nondeterministic or wrong ($l1)"; fails=$((fails + 1)); fi
 
+# =============================================================================================
+# dead-event — a DECLARED event emitter with no call site (issue #56)
+# =============================================================================================
+de_gate="$here/dead-event.sh"
+de_root="$tmp/de"
+
+# de_assert <desc> <want-exit> <ENV=v...> -- <facade-body> [<caller-body>]
+#   Rebuilds a two-file crate each time so state can't leak between cases.
+de_assert() {
+  local desc="$1" want="$2"; shift 2
+  local env=()
+  while [ "$1" != "--" ]; do env+=("$1"); shift; done
+  shift
+  rm -rf "$de_root"; mkdir -p "$de_root/src"
+  printf '%s\n' "$1" > "$de_root/src/facade.rs"
+  printf '%s\n' "${2:-}" > "$de_root/src/app.rs"
+  ( cd "$de_root" && env ${env[@]+"${env[@]}"} "$de_gate" . >/dev/null 2>&1 )
+  local got=$?
+  if [ "$got" = "$want" ]; then echo "ok    — $desc"
+  else echo "FAIL  — $desc (want exit $want, got $got)"; fails=$((fails + 1)); fi
+}
+DE=GUARDRAILS_DEADEVENT_ENFORCE=1
+
+# ADOPTION COSTS NOTHING: no marker => no population => silent success, even under ENFORCE.
+# This is the log-budget discipline (no budgets file -> skip), and it is what lets the gate ship
+# in the shared flake without every consumer repo lighting up red on day one.
+de_assert "no marker anywhere is a silent skip"        0 $DE -- 'pub fn emit_x() {}'
+
+# THE POPULATION IS DECLARED, NOT INFERRED (CONVENTIONS §"what declares the population?").
+de_assert "declared + uncalled is caught"              1 $DE -- '// guardrails:events
+pub fn emit_x() {}'
+de_assert "declared + called is clean"                 0 $DE -- '// guardrails:events
+pub fn emit_x() {}' 'fn run() { emit_x(); }'
+# A private fn in a facade file is a helper, not an event.
+de_assert "non-pub fn is not in the population"        0 $DE -- '// guardrails:events
+fn helper() {}'
+
+# EVERY pub form, at every indentation. Matching only `pub(crate) fn` — the shape the motivating
+# consumer happened to use — would print green on a facade written with plain `pub fn`: the silent
+# no-op that made adr-matrix report 5 Accepted ADRs where there were 43.
+for vis in 'pub' 'pub(crate)' 'pub(super)' 'pub(in crate::log)'; do
+  de_assert "population includes '$vis fn'"            1 $DE -- "// guardrails:events
+$vis fn emit_x() {}"
+done
+de_assert "population includes an impl-block method"   1 $DE -- '// guardrails:events
+impl Facade {
+    pub(crate) fn emit_x(&self) {}
+}'
+
+# REGION FORM: a facade module inside a bigger file.
+de_assert "outside a begin/end region is not declared" 0 $DE -- 'pub fn emit_outside() {}
+// guardrails:events-begin
+// guardrails:events-end'
+de_assert "inside a begin/end region IS declared"      1 $DE -- '// guardrails:events-begin
+pub fn emit_inside() {}
+// guardrails:events-end'
+
+# THE PROJECTION MUST NOT COUNT COMMENTS OR STRINGS. A `/// see emit_x` doc line on the facade
+# itself, or the name inside a message literal, would otherwise suppress the finding — the gate
+# would report green on exactly the dead emitter it exists to find.
+de_assert "a doc-comment mention is not a call site"   1 $DE -- '// guardrails:events
+/// See emit_x for the planned shape.
+pub fn emit_x() {}'
+de_assert "a string-literal mention is not a call site" 1 $DE -- '// guardrails:events
+pub fn emit_x() {}' 'fn run() { let _ = "emit_x was here"; }'
+
+# ...but a WHOLE-WORD reference that is not a call still counts. A well-factored emitter is often
+# wired as a value (`.map(emit_x)`), which a call-shaped `emit_x\s*\(` projection would miss and
+# report as dead — a false positive on correct, idiomatic code.
+de_assert "a fn-value reference counts as wired"       0 $DE -- '// guardrails:events
+pub fn emit_x() {}' 'fn run() { let f = emit_x; f(); }'
+de_assert "a use-import counts as wired"               0 $DE -- '// guardrails:events
+pub fn emit_x() {}' 'use crate::facade::emit_x;'
+# Substring collisions must NOT count (`emit_xyz` does not wire `emit_x`).
+de_assert "a substring match does not count as wired"  1 $DE -- '// guardrails:events
+pub fn emit_x() {}' 'fn run() { emit_xyz(); }'
+
+# A TEST-ONLY CALLER IS STILL DEAD — deliberately, and the OPPOSITE of why the other gates skip
+# tests/: nothing wired the event in production. Pinned so nobody "fixes" it back.
+mkdir -p "$de_root/tests" 2>/dev/null || true
+rm -rf "$de_root"; mkdir -p "$de_root/src" "$de_root/tests"
+printf '%s\n' '// guardrails:events
+pub fn emit_x() {}' > "$de_root/src/facade.rs"
+printf '%s\n' 'fn t() { emit_x(); }' > "$de_root/tests/it.rs"
+( cd "$de_root" && GUARDRAILS_DEADEVENT_ENFORCE=1 "$de_gate" . >/dev/null 2>&1 )
+if [ $? = 1 ]; then echo "ok    — a tests/-only caller is still dead"
+else echo "FAIL  — a tests/-only caller was counted as wired"; fails=$((fails + 1)); fi
+
+# ESCAPES: both conventions (own line, and the pure-comment line above — rustfmt wraps over-long
+# trailing comments onto the NEXT line, where they would suppress nothing).
+de_assert "guardrails-ok on the fn line suppresses"    0 $DE -- '// guardrails:events
+pub fn emit_x() {} // guardrails-ok: planned for v2'
+de_assert "guardrails-ok on the line ABOVE suppresses" 0 $DE -- '// guardrails:events
+// guardrails-ok(dead-event): emitted via the metrics! macro
+pub fn emit_x() {}'
+
+# NUDGE CONTRACT: findings do not fail by default; the ENFORCE knob promotes.
+de_assert "findings are a NUDGE by default (exit 0)"   0 -- '// guardrails:events
+pub fn emit_x() {}'
+
+# --- adversarial round: every case below returned a WRONG verdict on the first implementation ---
+# "EVERY pub form" is a promise the header makes; these are the spellings that broke it. A missed
+# spelling is not a near-miss — it is a whole facade the gate reports green on.
+de_assert "pub with TWO spaces before fn"              1 $DE -- '// guardrails:events
+pub  fn emit_x() {}'
+de_assert "pub(crate)fn with NO space"                 1 $DE -- '// guardrails:events
+pub(crate)fn emit_x() {}'
+de_assert "pub extern \"C\" fn (ABI string modifier)"    1 $DE -- '// guardrails:events
+pub extern "C" fn emit_x() {}'
+de_assert "pub async unsafe fn"                        1 $DE -- '// guardrails:events
+pub async unsafe fn emit_x() {}'
+de_assert "pub const fn"                               1 $DE -- '// guardrails:events
+pub const fn emit_x() {}'
+# ...and the non-fn items that must NOT be swept in.
+de_assert "pub struct / const / trait are not events"  0 $DE -- '// guardrails:events
+pub struct S;
+pub const N: u8 = 1;
+pub trait T {}'
+# A commented-out fn is a phantom: it can never have a call site, so it would be an unfixable
+# false positive.
+de_assert "a /* */-commented pub fn is not declared"   0 $DE -- '// guardrails:events
+/*
+pub fn emit_x() {}
+*/'
+# The marker needs a word boundary, or an unrelated word starting with it opts the file in.
+de_assert "guardrails:eventsource is not the marker"   0 $DE -- '// TODO: wire guardrails:eventsource later
+pub fn emit_x() {}'
+
+# SCALE — the case the gate exists for, and the one it silently failed. Passing the population and
+# the sighting table through the ENVIRONMENT blew ARG_MAX on a facade this size; awk died, the
+# `$( … )` capture swallowed the error, and the gate reported ZERO dead emitters and exit 0 EVEN
+# UNDER ENFORCE. A gate whose failure mode at the target scale is "all clear" is worse than none.
+de_big="$tmp/de_big"; rm -rf "$de_big"; mkdir -p "$de_big/src"
+{
+  echo '// guardrails:events'
+  i=0; while [ "$i" -lt 3000 ]; do echo "pub fn emit_event_$i(id: u64) {}"; i=$((i + 1)); done
+} > "$de_big/src/facade.rs"
+{
+  echo 'fn run() {'
+  i=0; while [ "$i" -lt 3000 ]; do echo "    emit_event_$i(1);"; i=$((i + 2)); done
+  echo '}'
+} > "$de_big/src/app.rs"
+de_big_out="$( cd "$de_big" && GUARDRAILS_DEADEVENT_ENFORCE=1 "$de_gate" . 2>/dev/null )"; de_big_rc=$?
+de_big_n="$(printf '%s\n' "$de_big_out" | grep -c 'emit_event_' || true)"
+if [ "$de_big_rc" = 1 ] && [ "$de_big_n" = 1500 ]; then
+  echo "ok    — 3000 declared / 1500 dead: exact count, no silent truncation"
+else
+  echo "FAIL  — scale case wrong (exit $de_big_rc, $de_big_n findings, want 1 and 1500)"; fails=$((fails + 1))
+fi
+
+# Cross-gate conformance (issue #55) lives in its own harness: it is the ONLY part of this suite
+# that must run under stock bash 3.2, so macOS CI runs it alone (the rest needs bash 4 —
+# nudge-ledger's associative arrays). Invoked here so the ubuntu job covers it too.
+"$here/test-conformance.sh" || fails=$((fails + 1))
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2

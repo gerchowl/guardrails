@@ -27,9 +27,13 @@ allowed_file() {
   set -- "${1#./}"
   case "$1" in *gates/*|tests/*|*/tests/*|*_test.*|*.test.*|examples/*|*/examples/*) return 0 ;; esac
   local g
-  for g in "${allow_globs[@]}"; do
+  # bash 3.2 (stock macOS `/bin/bash`) errors on "${arr[@]}" for an EMPTY array under
+  # `set -u`; the ${arr[@]+...} guard is the portable form. Without it this gate dies on
+  # line one wherever /bin/bash is the interpreter (#57).
+  for g in ${allow_globs[@]+"${allow_globs[@]}"}; do
     [ -n "$g" ] || continue
-    # shellcheck disable=SC2254 -- $g is intentionally a glob pattern
+    # $g is intentionally a glob pattern for case-matching
+    # shellcheck disable=SC2254
     case "$1" in $g) return 0 ;; esac
   done
   return 1
