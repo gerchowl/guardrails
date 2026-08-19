@@ -82,10 +82,48 @@ if not sample_file.is_file():
     sys.stderr.write(f"guardrails/log-budget: sample log {sample_file} not found — skipping.\n")
     sys.exit(0)
 
+def die(message):
+    """A config mistake is the USER's error to fix, not a stack trace to decode."""
+    sys.stderr.write(f"guardrails/log-budget: {budgets_path.name}: {message}\n")
+    sys.exit(2)
+
+
+def as_number(value, cast, where):
+    try:
+        return cast(value)
+    except (TypeError, ValueError):
+        die(f"{where} must be a number, got {value!r}")
+
+
+def as_table(value, where):
+    if not isinstance(value, dict):
+        die(f"[{where}] must be a table (e.g. `[{where}]` with `min_count = 1`), got {value!r}")
+    return value
+
+
+VALID_MODES = ("gate", "nudge")
+
+
+def as_mode(entry, where):
+    """An unrecognised mode used to fall through to nudge — so `mode = "Gate"` silently disabled
+    enforcement on the very entry the author wrote to enforce. Reject it loudly instead."""
+    mode = entry.get("mode", "gate")
+    if mode not in VALID_MODES:
+        die(f"{where}: mode must be one of {VALID_MODES}, got {mode!r}")
+    return mode
+
+
 event_field = cfg.get("event_field", "event")
-default_max_pct = float(cfg.get("default_max_pct", 5.0))
-event_cfg = cfg.get("event", {})
-require_cfg = cfg.get("require", {})
+default_max_pct = as_number(cfg.get("default_max_pct", 5.0), float, "default_max_pct")
+event_cfg = as_table(cfg.get("event", {}), "event")
+require_cfg = as_table(cfg.get("require", {}), "require")
+
+# Validate every declared entry EAGERLY. Checking an entry only when its event happens to appear in
+# the sample meant a malformed entry for an absent event was never seen at all.
+for _section, _table in (("event", event_cfg), ("require", require_cfg)):
+    for _name, _entry in sorted(_table.items()):
+        _where = f'{_section}."{_name}"'
+        as_mode(as_table(_entry, _where), _where)
 
 
 def event_id(record):
@@ -131,23 +169,34 @@ def record_finding(mode, message):
 # Sorted by descending share then id so the report is byte-identical across runs (guardrails bans
 # wall-clock/random for reproducibility; dict order would otherwise leak insertion order).
 for name, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
-    entry = event_cfg.get(name, {})
-    ceiling = float(entry.get("max_pct", default_max_pct))
+    entry = as_table(event_cfg.get(name, {}), f'event."{name}"')
+    ceiling = as_number(entry.get("max_pct", default_max_pct), float, f'event."{name}".max_pct')
     share = 100.0 * count / total
     if share > ceiling:
         record_finding(
-            entry.get("mode", "gate"),
+            as_mode(entry, f'event."{name}"'),
             f"{name}: {share:.1f}% of {total} records ({count}) exceeds max_pct {ceiling:g}",
+        )
+
+# M2: a ceiling declared for an event that never appears is usually a TYPO in the event id, and
+# silently does nothing — exactly the failure the author was trying to prevent.
+for name in sorted(event_cfg):
+    if name not in counts:
+        sys.stderr.write(
+            f"guardrails/log-budget: {budgets_path.name}: [event.\"{name}\"] declares a ceiling "
+            f"for an event absent from {sample_file.name} — typo, or stale entry?\n"
         )
 
 # --- direction 2: SILENCE — declared events must actually appear ----------------------------
 for name in sorted(require_cfg):
-    entry = require_cfg[name] if isinstance(require_cfg[name], dict) else {}
-    minimum = int(entry.get("min_count", 1))
+    # M1: `[require]` + `x = 5` is a natural mistake for `[require."x"] min_count = 5`. Silently
+    # coercing it to min_count=1 discarded the author's number.
+    entry = as_table(require_cfg[name], f'require."{name}"')
+    minimum = as_number(entry.get("min_count", 1), int, f'require."{name}".min_count')
     seen = counts.get(name, 0)
     if seen < minimum:
         record_finding(
-            entry.get("mode", "gate"),
+            as_mode(entry, f'require."{name}"'),
             f"{name}: required event seen {seen}x, expected >= {minimum} "
             f"(declared in {budgets_path.name} but the operation logged nothing)",
         )
@@ -159,8 +208,9 @@ for message in gate_hits + nudge_hits:
     print(f"{sample_file}: {message}")
 
 if gate_hits:
+    tail = f" (+{len(nudge_hits)} nudge-mode)" if nudge_hits else ""
     sys.stderr.write(
-        f"guardrails/log-budget: {len(gate_hits)} budget violation(s) in {sample_file}. "
+        f"guardrails/log-budget: {len(gate_hits)} budget violation(s){tail} in {sample_file}. "
         "Fix the level/instrumentation, or adjust log-budgets.toml deliberately.\n"
     )
     sys.exit(1)

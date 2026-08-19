@@ -45,7 +45,10 @@ allowed_file() {
   set -- "${1#./}"
   case "$1" in *gates/*|tests/*|*/tests/*|*_test.*|*.test.*|examples/*|*/examples/*) return 0 ;; esac
   local g
-  for g in "${allow_globs[@]}"; do
+  # bash 3.2 (stock macOS) errors on "${arr[@]}" for an EMPTY array under `set -u`; the
+  # ${arr[@]+...} guard is the portable form. Without it this gate dies on line one wherever
+  # /bin/bash is the interpreter.
+  for g in ${allow_globs[@]+"${allow_globs[@]}"}; do
     [ -n "$g" ] || continue
     # shellcheck disable=SC2254 -- $g is intentionally a glob pattern
     case "$1" in $g) return 0 ;; esac
@@ -60,71 +63,107 @@ files() {
   done
 }
 
-# One awk pass per file. Tracks brace depth and, per depth, WHY that brace opened (loop / hot-named
-# fn / other) so a macro can ask "is any enclosing scope hot?". Same idiom as no-hardcoded.sh's
-# intest/intunable depth tracking: strip comments and blank string+char literals on a scratch copy,
-# then count braces. Inherits that approach's limits (escaped quotes, raw strings) — acceptable for
-# a nudge, where a miss costs an annotation rather than a broken build.
+# One awk pass per file, as a POSITIONAL lexer rather than a line matcher. Two phases per line:
+#
+#   A. blank out everything that is not code, CARRYING STATE ACROSS LINES — line comments, /* */
+#      block comments, "strings" (with \" escapes), r"…"/r#"…"# raw strings, and 'c' char literals
+#      (distinguished from 'lifetime ticks). Positions are preserved 1:1 so phase B's offsets stay
+#      meaningful.
+#   B. walk the blanked line LEFT TO RIGHT, applying braces and keywords in the order they occur,
+#      and evaluate a macro AT ITS OWN POSITION.
+#
+# Phase B is what makes the tricky cases fall out for free instead of needing special-casing:
+# nested loops on one line, a macro after a loop already closed on the same line, a hot fn whose
+# whole body is one line, and a `for` whose `{` is on the NEXT line (rustfmt does this constantly)
+# all reduce to "what is the brace stack at the macro's offset?".
 scan() {
   awk '
-  function hot_name(s) {
-    return (s ~ /(^|[^a-zA-Z0-9_])fn[ \t]+(tick|poll|sample|heartbeat|render|on_frame|on_tick|step|update)[a-zA-Z0-9_]*[ \t]*[(<]/)
+  function is_kw(w) { return (w == "loop" || w == "while" || w == "for") }
+  function is_hot(w) {
+    return (w == "tick" || w == "poll" || w == "sample" || w == "heartbeat" || w == "render" ||
+            w == "on_frame" || w == "on_tick" || w == "step" || w == "update")
   }
-  function is_loop(s) {
-    return (s ~ /(^|[^a-zA-Z0-9_])(loop|while|for)([^a-zA-Z0-9_]|$)/)
-  }
-  function braces(s, ch, n) { n = gsub(ch, "", s); return n }
-  # Tail of s after its LAST loop keyword — so brace balance is measured from the loop, not from
-  # the start of the line (where an enclosing fn`s own `{` would leak in).
-  function after_last_loop(s,   rest, tail) {
-    rest = s; tail = ""
-    while (match(rest, /(^|[^a-zA-Z0-9_])(loop|while|for)([^a-zA-Z0-9_]|$)/)) {
-      tail = substr(rest, RSTART + RLENGTH - 1)
-      rest = tail
-    }
-    return tail
+  function hot_prefixed(w,   i, bases) {
+    split("tick poll sample heartbeat render on_frame on_tick step update", bases, " ")
+    for (i in bases) if (index(w, bases[i]) == 1) return 1
+    return 0
   }
   {
-    raw = $0
-    body = raw
-    sub(/\/\/.*/, "", body)          # drop line comment
-    gsub(/"[^"]*"/, "", body)        # blank simple string literals
-    gsub(/'\''\\?.'\''/, "", body)   # blank char literals
-
-    pending_loop = is_loop(body) ? 1 : 0
-    pending_hot  = hot_name(body) ? 1 : 0
-
-    # Does a macro appear on this line, and is it inside a loop opened EARLIER ON THIS SAME LINE?
-    # `for x in xs { info!() }` must flag; `for _ in xs { } info!()` must not. Compare brace balance
-    # in the prefix before the macro rather than guessing from the whole line.
-    flag_same_line = 0
-    if (match(body, /(^|[^a-zA-Z0-9_])(info|warn)![ \t]*\(/)) {
-      prefix = substr(body, 1, RSTART)
-      if (is_loop(prefix)) {
-        tail = after_last_loop(prefix)
-        o = tail; c = tail
-        if (braces(o, "{") > braces(c, "}")) flag_same_line = 1
+    line = $0
+    out = ""
+    i = 1
+    n = length(line)
+    while (i <= n) {
+      c = substr(line, i, 1)
+      if (st == 2) {                                   # inside /* */
+        if (c == "*" && substr(line, i + 1, 1) == "/") { st = 0; out = out "  "; i += 2; continue }
+        out = out " "; i++; continue
       }
-      has_macro = 1
-    } else has_macro = 0
-
-    # Is any ENCLOSING scope (opened on a previous line) hot?
-    in_hot = 0
-    for (d = 1; d <= depth; d++) if (kind[d] == "loop" || kind[d] == "hot") { in_hot = 1; break }
-
-    if (has_macro && (in_hot || flag_same_line)) printf "%d\n", FNR
-
-    # Apply this line'\''s braces AFTER the decision, so a closing brace does not retroactively
-    # un-hot a macro that sat inside the block.
-    nopen = braces(body, "{"); nclose = braces(body, "}")
-    for (i = 0; i < nopen; i++) {
-      depth++
-      kind[depth] = pending_loop ? "loop" : (pending_hot ? "hot" : "other")
-      pending_loop = 0; pending_hot = 0
+      if (st == 3) {                                   # inside "…"
+        if (c == "\\") { out = out "  "; i += 2; continue }
+        if (c == "\"") { st = 0; out = out " "; i++; continue }
+        out = out " "; i++; continue
+      }
+      if (st == 4) {                                   # inside r#*"…"#*
+        if (c == "\"") {
+          j = i + 1; h = 0
+          while (substr(line, j, 1) == "#") { h++; j++ }
+          if (h >= raw_h) { st = 0; out = out sprintf("%*s", 1 + raw_h, ""); i = j; continue }
+        }
+        out = out " "; i++; continue
+      }
+      # --- normal code ---
+      if (c == "/" && substr(line, i + 1, 1) == "/") { while (i <= n) { out = out " "; i++ }; break }
+      if (c == "/" && substr(line, i + 1, 1) == "*") { st = 2; out = out "  "; i += 2; continue }
+      if (c == "\"") { st = 3; out = out " "; i++; continue }
+      if (c == "r" || c == "b") {                      # r"…", r#"…"#, b"…"
+        j = i + 1; h = 0
+        while (substr(line, j, 1) == "#") { h++; j++ }
+        if (substr(line, j, 1) == "\"") { raw_h = h; st = 4; out = out sprintf("%*s", j - i + 1, ""); i = j + 1; continue }
+      }
+      if (c == "'"'"'") {                              # char literal vs lifetime tick
+        if (substr(line, i + 1, 1) == "\\" && substr(line, i + 3, 1) == "'"'"'") { out = out "    "; i += 4; continue }
+        if (substr(line, i + 2, 1) == "'"'"'") { out = out "   "; i += 3; continue }
+        out = out " "; i++; continue                   # lifetime: harmless to blank the tick
+      }
+      out = out c; i++
     }
-    for (i = 0; i < nclose; i++) { if (depth > 0) { delete kind[depth]; depth-- } }
+    if (st == 2 || st == 3 || st == 4) { } else st = 0  # line comments end at EOL; others persist
+
+    # --- phase B: walk the blanked line in order ---
+    m = length(out)
+    k = 1
+    while (k <= m) {
+      ch = substr(out, k, 1)
+      if (ch == "{") {
+        depth++
+        kind[depth] = pending_loop ? "loop" : (pending_hot ? "hot" : "other")
+        pending_loop = 0; pending_hot = 0
+        k++; continue
+      }
+      if (ch == "}") {
+        if (depth > 0) { delete kind[depth]; depth-- }
+        k++; continue
+      }
+      if (ch ~ /[A-Za-z_]/ && (k == 1 || substr(out, k - 1, 1) !~ /[A-Za-z0-9_]/)) {
+        rest = substr(out, k)
+        match(rest, /^[A-Za-z_][A-Za-z0-9_]*/)
+        w = substr(rest, 1, RLENGTH)
+        after = substr(rest, RLENGTH + 1)
+        if (is_kw(w)) pending_loop = 1
+        else if (w == "fn") { fn_next = 1 }
+        else if (fn_next) { fn_next = 0; if (is_hot(w) || hot_prefixed(w)) pending_hot = 1 }
+        else if ((w == "info" || w == "warn") && after ~ /^![ \t]*\(/) {
+          hot = 0
+          for (d = 1; d <= depth; d++) if (kind[d] == "loop" || kind[d] == "hot") { hot = 1; break }
+          if (hot) print FNR
+        }
+        k += RLENGTH; continue
+      }
+      k++
+    }
   }
-  ' "$1"
+  ' "$1" | sort -n | uniq
 }
 
 while IFS= read -r f; do
@@ -134,8 +173,12 @@ while IFS= read -r f; do
   while IFS= read -r no; do
     [ -n "$no" ] || continue
     line="$(sed -n "${no}p" "$f")"
-    case "$line" in *guardrails-ok*)
-      case "$line" in *guardrails-ok\(*|*guardrails-ok:*) ;; *) bare=$((bare + 1)) ;; esac
+    # Only a marker in COMMENT position suppresses. Matching the raw line let a caller defeat the
+    # gate with `info!("guardrails-ok")` in the message text.
+    comment="${line#*//}"
+    [ "$comment" = "$line" ] && comment=""
+    case "$comment" in *guardrails-ok*)
+      case "$comment" in *guardrails-ok\(*|*guardrails-ok:*) ;; *) bare=$((bare + 1)) ;; esac
       continue ;;
     esac
     # Own-line marker ABOVE the hit: rustfmt wraps over-long trailing comments onto the NEXT line
