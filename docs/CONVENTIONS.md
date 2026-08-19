@@ -129,6 +129,14 @@ by adding **one row**. Two properties make this more than a rename of the old pe
   — built by `read -ra`, or by a bare `name=()` — must be expanded through `${a[@]+"${a[@]}"}` or
   `"${a[@]:-}"`, or be count-guarded, at every site.
 
+The matrix lives in `gates/test-conformance.sh`, split out from `test-gates.sh` because it is the
+one part of the suite that must itself run under stock bash 3.2 — macOS CI executes exactly that
+file. Pointing the runner at the *full* suite instead reported ~26 failures that all reduced to
+"this host has no bash 4" (`tools/nudge-ledger.sh` needs associative arrays), which would have
+buried the two real findings. **State the portability contract narrowly enough to be true:** every
+gate and tool must *parse* under bash 3.x and every gate must *run* there with an empty
+environment; behavioural depth stays on the bash-5 job.
+
 **The lint must not exempt itself.** The first version skipped `test-*.sh`, and the macOS job caught
 `env "${env[@]}"` crashing in `test-gates.sh` on its first run — in the harness whose job is to
 police exactly that. Cost of the whole portability job: one runner, seven seconds, one real bug on

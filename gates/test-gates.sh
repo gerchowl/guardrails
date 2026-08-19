@@ -1417,136 +1417,60 @@ pub fn emit_x() {}'
 de_assert "findings are a NUDGE by default (exit 0)"   0 -- '// guardrails:events
 pub fn emit_x() {}'
 
-# =============================================================================================
-# CROSS-GATE CONFORMANCE MATRIX (issue #55) — pin the INVARIANT, not the code.
-#
-# #55 asked whether to extract the duplicated files()/allowed_file()/guardrails-ok preamble. The
-# answer stayed NO (see docs/CONVENTIONS.md §"Duplication with a conformance matrix"), so what
-# has to exist instead is a matrix every copy is checked against — because #57 proved the real
-# cost of the duplication: hot-info.sh carried the bash-3.2 fix WITH a comment explaining the
-# hazard, while two sibling copies still crashed. A per-gate, hand-written test did not catch
-# that; a table where a new gate is enrolled by adding ONE ROW does.
-#
-# Row: <gate-script> <glob-env-var> <extra-env-to-force-enforcement> <fixture>
-# =============================================================================================
-conf_rows=(
-  "no-debug-leftovers.sh|GUARDRAILS_OUTPUT_GLOBS|GUARDRAILS_CONF_NOOP=1|fn f() { println!(\"x\"); }"
-  "no-raw-trace-fields.sh|GUARDRAILS_TRACE_ALLOW_GLOBS|GUARDRAILS_CONF_NOOP=1|fn f() { info!(?user); }"
-  "hot-info.sh|GUARDRAILS_HOTINFO_ALLOW|GUARDRAILS_HOTINFO_ENFORCE=1|fn f() { loop { info!(\"t\"); } }"
-)
+# --- adversarial round: every case below returned a WRONG verdict on the first implementation ---
+# "EVERY pub form" is a promise the header makes; these are the spellings that broke it. A missed
+# spelling is not a near-miss — it is a whole facade the gate reports green on.
+de_assert "pub with TWO spaces before fn"              1 $DE -- '// guardrails:events
+pub  fn emit_x() {}'
+de_assert "pub(crate)fn with NO space"                 1 $DE -- '// guardrails:events
+pub(crate)fn emit_x() {}'
+de_assert "pub extern \"C\" fn (ABI string modifier)"    1 $DE -- '// guardrails:events
+pub extern "C" fn emit_x() {}'
+de_assert "pub async unsafe fn"                        1 $DE -- '// guardrails:events
+pub async unsafe fn emit_x() {}'
+de_assert "pub const fn"                               1 $DE -- '// guardrails:events
+pub const fn emit_x() {}'
+# ...and the non-fn items that must NOT be swept in.
+de_assert "pub struct / const / trait are not events"  0 $DE -- '// guardrails:events
+pub struct S;
+pub const N: u8 = 1;
+pub trait T {}'
+# A commented-out fn is a phantom: it can never have a call site, so it would be an unfixable
+# false positive.
+de_assert "a /* */-commented pub fn is not declared"   0 $DE -- '// guardrails:events
+/*
+pub fn emit_x() {}
+*/'
+# The marker needs a word boundary, or an unrelated word starting with it opts the file in.
+de_assert "guardrails:eventsource is not the marker"   0 $DE -- '// TODO: wire guardrails:eventsource later
+pub fn emit_x() {}'
 
-conf_root="$tmp/conf"
-for row in "${conf_rows[@]}"; do
-  IFS='|' read -r cg cvar cenf cfix <<< "$row"
-  cgate="$here/$cg"
-  rm -rf "$conf_root"; mkdir -p "$conf_root/vendored" "$conf_root/src/vendored"
-  printf '%s\n' "$cfix" > "$conf_root/vendored/gen.rs"
-  cp "$conf_root/vendored/gen.rs" "$conf_root/src/vendored/gen.rs"
-
-  # (i) The fixture must actually be CAUGHT with no glob set. Without this, every assertion
-  #     below passes vacuously on a gate that flags nothing at all.
-  ( cd "$conf_root" && env "$cenf" "$cgate" ./vendored/gen.rs >/dev/null 2>&1 )
-  if [ $? = 1 ]; then echo "ok    — [$cg] fixture is caught with no glob set"
-  else echo "FAIL  — [$cg] fixture NOT caught — the rows below prove nothing"; fails=$((fails + 1)); fi
-
-  # (ii)+(iii) The ./-prefix normalization: dir-walk mode prefixes every path with `./`, so a
-  #     configured glob WITHOUT a leading `*` must still match. A gate that gets this wrong
-  #     silently no-ops its allow-glob — the knob looks wired and does nothing.
-  ( cd "$conf_root" && env "$cenf" "$cvar=vendored/*" "$cgate" ./vendored/gen.rs >/dev/null 2>&1 )
-  if [ $? = 0 ]; then echo "ok    — [$cg] glob without a leading * matches a ./-prefixed path"
-  else echo "FAIL  — [$cg] ./-prefix normalization missing"; fails=$((fails + 1)); fi
-  ( cd "$conf_root" && env "$cenf" "$cvar=*/vendored/*" "$cgate" ./src/vendored/gen.rs >/dev/null 2>&1 )
-  if [ $? = 0 ]; then echo "ok    — [$cg] glob with a leading * matches a nested path"
-  else echo "FAIL  — [$cg] leading-* glob broken"; fails=$((fails + 1)); fi
-
-  # (iv) An EMPTY knob must neither crash nor allow everything. `IFS=: read -ra a <<< ""` yields
-  #      an empty array, and `:`-boundary empties ("a::b") must not glob-match every path.
-  ( cd "$conf_root" && env "$cenf" "$cvar=" "$cgate" ./vendored/gen.rs >/dev/null 2>&1 )
-  if [ $? = 1 ]; then echo "ok    — [$cg] an empty glob knob does not allow everything"
-  else echo "FAIL  — [$cg] an empty glob knob swallowed the finding"; fails=$((fails + 1)); fi
-done
-
-# --- bash 3.2 empty-array hazard (issue #57): a SHAPE lint, not a behaviour probe -------------
-# `set -u` + an EMPTY array: bash 3.2 (stock macOS /bin/bash, 3.2.57) errors on "${arr[@]}";
-# bash 5 does not — which is why `#!/usr/bin/env bash` hid this everywhere a Nix/Homebrew bash
-# was on PATH, and why CI (ubuntu, bash 5) could never see it. `BASH_COMPAT=3.2` and
-# `shopt -s compat32` do NOT restore the old behaviour, so a behaviour probe is unrunnable on
-# the CI runner. The invariant is therefore checked STRUCTURALLY, on any bash: every array built
-# by `read -ra` (the only ones here that can legitimately be empty) must be expanded through a
-# guard — `${a[@]+"${a[@]}"}` or `"${a[@]:-}"` — at every site.
-#
-# This is also the answer to "a behaviour test can pass vacuously": an early-return that skips
-# the loop would satisfy a runtime probe while leaving the unguarded expansion in place. A shape
-# lint cannot be satisfied vacuously.
-#
-# Scope, stated so the gap is visible rather than assumed away: the lint tracks arrays built by
-# `read -ra` and by a bare `name=()`, because those are the two that are EMPTY in the normal case.
-# It deliberately accepts a count guard (`[ "${#a[@]}" -gt 0 ]` — legal on bash 3.2) as sufficient,
-# since that is the idiom for accumulator arrays. THE HARNESSES ARE LINTED TOO: the macOS CI job
-# caught `env "${env[@]}"` crashing right here in test-gates.sh, in code whose whole job is to
-# police that class. A lint that exempts itself is how that happened.
-unguarded="$(
-  for g in "$here"/*.sh; do
-    awk -v F="$(basename "$g")" '
-      /^[[:space:]]*#/ { line[NR] = ""; next }        # a comment quoting the pattern is not code
-      match($0, /read[[:space:]]+-r?a[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/) {
-        seg = substr($0, RSTART, RLENGTH); sub(/^.*[[:space:]]/, "", seg); arr[seg] = 1
-      }
-      match($0, /(^|[[:space:]])(local[[:space:]]+|declare[[:space:]]+-a[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=\(\)/) {
-        seg = substr($0, RSTART, RLENGTH); sub(/=\(\)$/, "", seg); sub(/^.*[[:space:]]/, "", seg); arr[seg] = 1
-      }
-      /\$\{#[A-Za-z_][A-Za-z0-9_]*\[@\]\}/ {           # a count guard makes the array safe to expand
-        s2 = $0
-        while (match(s2, /\$\{#[A-Za-z_][A-Za-z0-9_]*\[@\]\}/)) {
-          nm = substr(s2, RSTART + 3, RLENGTH - 7); guardedby[nm] = 1
-          s2 = substr(s2, RSTART + RLENGTH)
-        }
-      }
-      { line[NR] = $0 }
-      END {
-        for (n in arr) {
-          if (n in guardedby) continue
-          guarded = "${" n "[@]+\"${" n "[@]}\"}"
-          bare    = "\"${" n "[@]}\""
-          for (i = 1; i <= NR; i++) {
-            s = line[i]
-            while ((p = index(s, guarded)) > 0) s = substr(s, 1, p - 1) substr(s, p + length(guarded))
-            if (index(s, bare) > 0) printf "%s:%d: %s\n", F, i, n
-          }
-        }
-      }
-    ' "$g"
-  done
-)"
-if [ -z "$unguarded" ]; then
-  echo "ok    — every possibly-empty array is expanded through a bash-3.2-safe guard"
+# SCALE — the case the gate exists for, and the one it silently failed. Passing the population and
+# the sighting table through the ENVIRONMENT blew ARG_MAX on a facade this size; awk died, the
+# `$( … )` capture swallowed the error, and the gate reported ZERO dead emitters and exit 0 EVEN
+# UNDER ENFORCE. A gate whose failure mode at the target scale is "all clear" is worse than none.
+de_big="$tmp/de_big"; rm -rf "$de_big"; mkdir -p "$de_big/src"
+{
+  echo '// guardrails:events'
+  i=0; while [ "$i" -lt 3000 ]; do echo "pub fn emit_event_$i(id: u64) {}"; i=$((i + 1)); done
+} > "$de_big/src/facade.rs"
+{
+  echo 'fn run() {'
+  i=0; while [ "$i" -lt 3000 ]; do echo "    emit_event_$i(1);"; i=$((i + 2)); done
+  echo '}'
+} > "$de_big/src/app.rs"
+de_big_out="$( cd "$de_big" && GUARDRAILS_DEADEVENT_ENFORCE=1 "$de_gate" . 2>/dev/null )"; de_big_rc=$?
+de_big_n="$(printf '%s\n' "$de_big_out" | grep -c 'emit_event_' || true)"
+if [ "$de_big_rc" = 1 ] && [ "$de_big_n" = 1500 ]; then
+  echo "ok    — 3000 declared / 1500 dead: exact count, no silent truncation"
 else
-  echo "FAIL  — unguarded \"\${arr[@]}\" (crashes stock bash 3.2 under set -u):"
-  printf '%s\n' "$unguarded" | sed 's/^/        /'
-  fails=$((fails + 1))
+  echo "FAIL  — scale case wrong (exit $de_big_rc, $de_big_n findings, want 1 and 1500)"; fails=$((fails + 1))
 fi
 
-# Belt to that suspender: if a real bash 3.x is on this host (macOS ships one at /bin/bash),
-# run every gate through it with an EMPTY environment — the reproducer from #57 verbatim.
-b32=""
-for cand in /bin/bash /usr/bin/bash; do
-  [ -x "$cand" ] || continue
-  case "$("$cand" -c 'echo $BASH_VERSION' 2>/dev/null)" in 3.*) b32="$cand"; break ;; esac
-done
-if [ -z "$b32" ]; then
-  echo "skip  — no bash 3.x on this host; the shape lint above is the portable check"
-else
-  mkdir -p "$tmp/b32"; printf 'fn f() { info!("x"); println!("y"); }\n' > "$tmp/b32/c.rs"
-  b32_bad=""
-  for g in "$here"/*.sh; do
-    case "$(basename "$g")" in test-*|protect-trunk*) continue ;; esac  # protect-trunk-push reads stdin
-    o="$(env -i PATH=/usr/bin:/bin HOME="$tmp" "$b32" "$g" "$tmp/b32/c.rs" 2>&1 </dev/null)"
-    case "$o" in *"unbound variable"*) b32_bad="$b32_bad $(basename "$g")" ;; esac
-  done
-  if [ -z "$b32_bad" ]; then echo "ok    — every gate runs under bash 3.x with an empty environment"
-  else echo "FAIL  — gate(s) crash on bash 3.x:$b32_bad"; fails=$((fails + 1)); fi
-fi
-
+# Cross-gate conformance (issue #55) lives in its own harness: it is the ONLY part of this suite
+# that must run under stock bash 3.2, so macOS CI runs it alone (the rest needs bash 4 —
+# nudge-ledger's associative arrays). Invoked here so the ubuntu job covers it too.
+"$here/test-conformance.sh" || fails=$((fails + 1))
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2

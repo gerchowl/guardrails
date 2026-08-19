@@ -34,6 +34,10 @@ GATES — block a commit unless escaped:
                       in your schema surface (PII/secrets leak into logs by reflex otherwise)
   derived-docs        regions marked `<!-- guardrails:derived cmd="…" -->` must match `cmd`'s output
                       (re-run with --fix to regenerate; commands run with repo-hook trust)
+  log-budget          the one gate that reads a LOG, not source: an observed JSONL vs a checked-in
+                      log-budgets.toml, in BOTH directions — `max_pct` bounds an event from above
+                      (noise), `[require]` bounds a declared event from below (silence). No
+                      budgets file → skips. Per-event `mode = "nudge"` / GUARDRAILS_LOG_ENFORCE=1
   + gitleaks · rustfmt · clippy -D warnings · cargo-deny
 
 NUDGES — warn (exit 0); promote per-repo with the gate's *_ENFORCE knob:
@@ -74,6 +78,9 @@ CONFIG KNOBS (in your repo root):
                            to loosen — the ratchet only tightens
   GUARDRAILS_ENV_PREFIXES  no-hardcoded: colon-sep env-var name prefixes to flag as bare string
                            literals (write the shared const instead), e.g. "MYAPP_:OTHER_"
+  log-budgets.toml         log-budget: `sample` (the captured JSONL), per-event `max_pct` ceilings and
+                           `[require]` floors. Absence is only checkable against an enumerable
+                           population — this file IS that population
   perf-budgets.toml        perf-budget: criterion median ceilings (run after `cargo criterion`)
   perf-history.csv         perf-record: committed per-bench history; the PR diff = the perf report
   numerical-obligation.toml  numerical-obligation: [set."name"] entries → (baseline json, measurement

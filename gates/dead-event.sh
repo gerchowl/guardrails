@@ -84,22 +84,40 @@ done < <(files "${roots[@]}")
 # adr-matrix report 5 Accepted ADRs where there were 43.
 declared() {
   awk '
-  BEGIN { in_region = 0; whole_file = 0 }
+  BEGIN { in_region = 0; whole_file = 0; in_block = 0 }
   {
     line = $0
-    # Markers are read from the RAW line (they are comments by construction).
+    # Markers are read from the RAW line (they are comments by construction). The tail class
+    # keeps `guardrails:eventsource` in some unrelated TODO from silently opting a whole file in.
     if (line ~ /guardrails:events-begin/) { in_region = 1; next }
     if (line ~ /guardrails:events-end/)   { in_region = 0; next }
-    if (line ~ /guardrails:events([^-]|$)/) { whole_file = 1; next }
+    if (line ~ /guardrails:events([^-A-Za-z0-9_]|$)/) { whole_file = 1; next }
 
-    if (!whole_file && !in_region) next
+    if (!whole_file && !in_region) { prev = line; next }
+
+    # Blank /* … */ block comments, carrying state across lines: a `pub fn` inside a commented-out
+    # region is not a declaration, and counting it would put a phantom name in the population that
+    # can never have a call site — a false positive that is impossible to "fix".
+    code = ""; i = 1; n = length(line)
+    while (i <= n) {
+      c = substr(line, i, 1)
+      if (in_block) {
+        if (c == "*" && substr(line, i + 1, 1) == "/") { in_block = 0; code = code "  "; i += 2; continue }
+        code = code " "; i++; continue
+      }
+      if (c == "/" && substr(line, i + 1, 1) == "*") { in_block = 1; code = code "  "; i += 2; continue }
+      code = code c; i++
+    }
 
     # `guardrails-ok` on this line, or on a pure-comment line directly above, opts one fn out.
     if (line ~ /guardrails-ok/) { prev = line; next }
     if (prev ~ /^[[:space:]]*\/\// && prev ~ /guardrails-ok/) { prev = line; next }
 
-    if (match(line, /^[[:space:]]*pub([[:space:]]*\([^)]*\))?[[:space:]]+([A-Za-z_]+[[:space:]]+)*fn[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) {
-      seg = substr(line, RSTART, RLENGTH)
+    # Visibility spans EVERY pub form. The `(…)` restriction may be followed by no space at all
+    # (`pub(crate)fn`), and the modifier chain between visibility and `fn` admits `const`, `async`,
+    # `unsafe` AND the ABI string of `pub extern "C" fn` — all legal Rust, all previously invisible.
+    if (match(code, /^[[:space:]]*pub([[:space:]]*\([^)]*\)[[:space:]]*|[[:space:]]+)(([A-Za-z_][A-Za-z0-9_]*|"[^"]*")[[:space:]]+)*fn[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) {
+      seg = substr(code, RSTART, RLENGTH)
       sub(/^.*[^A-Za-z0-9_]fn[[:space:]]+/, "", seg)
       printf "%s\t%s\t%d\n", seg, FILENAME, FNR
     }
@@ -119,9 +137,10 @@ done
 pop="$(printf '%s' "$pop" | grep -v '^[[:space:]]*$')" || true
 [ -n "$pop" ] || exit 0
 
-names_file="$(mktemp)"
-trap 'rm -f "$names_file"' EXIT
-printf '%s\n' "$pop" | cut -f1 | sort -u > "$names_file"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+printf '%s\n' "$pop" > "$work/pop"
+cut -f1 "$work/pop" | sort -u > "$work/names"
 
 # --- 2. the projection: where is each name referenced? --------------------------------------
 # One awk pass over the whole corpus (not one grep per name — a 4800-line facade declares
@@ -129,7 +148,10 @@ printf '%s\n' "$pop" | cut -f1 | sort -u > "$names_file"
 # line on the facade itself would otherwise count as a call site and suppress the finding.
 # Blanking is single-line by design; a name mentioned inside a `/* */` block or a multi-line raw
 # string still counts as a reference — under-reporting, the safe direction for a nudge.
-sightings="$(awk -v names="$names_file" '
+# Batched through xargs, and the file list is NOT expanded onto one awk command line: a large
+# workspace would blow ARG_MAX exactly where the gate is supposed to be most useful.
+: > "$work/sightings"
+printf '%s\0' "${corpus[@]}" | xargs -0 awk -v names="$work/names" '
   BEGIN { while ((getline n < names) > 0) if (n != "") want[n] = 1 }
   {
     s = $0; n = length(s); out = ""; i = 1
@@ -157,29 +179,28 @@ sightings="$(awk -v names="$names_file" '
       k++
     }
   }
-' "${corpus[@]}")"
+'  >> "$work/sightings" || { echo "guardrails/dead-event: projection scan failed — refusing to report a clean bill of health" >&2; exit 2; }
 
 # --- 3. dead = every sighting is its own definition line ------------------------------------
 # Single pass, not one awk per name: a 4800-line facade declares hundreds of them, and the
 # per-name loop this replaced was O(names x sightings) process spawns.
-out="$(POP="$pop" SIGHT="$sightings" awk '
-  BEGIN {
-    FS = "\t"
-    n = split(ENVIRON["POP"], plines, "\n")
-    for (i = 1; i <= n; i++) {
-      if (plines[i] == "") continue
-      split(plines[i], p, FS)
-      key = p[1] SUBSEP p[2] SUBSEP p[3]
-      isdef[key] = 1
-      order[++cnt] = plines[i]
-    }
-    m = split(ENVIRON["SIGHT"], slines, "\n")
-    for (i = 1; i <= m; i++) {
-      if (slines[i] == "") continue
-      split(slines[i], s, FS)
-      # A sighting that is not the declaration itself is a real reference.
-      if (!((s[1] SUBSEP s[2] SUBSEP s[3]) in isdef)) referenced[s[1]] = 1
-    }
+out="$(awk -F'\t' '
+  # Two input files, in order: the declared population, then every sighting of a declared name.
+  # Passed as FILES rather than through the environment: a ~4800-line facade declares hundreds of
+  # names and tens of thousands of sightings, and `VAR=… awk` dies with E2BIG at that size. The
+  # capture would have swallowed the error and reported ZERO dead emitters under ENFORCE — the
+  # silent no-op this gate exists to prevent, in the gate itself.
+  FNR == NR {
+    if ($0 == "") next
+    isdef[$1 SUBSEP $2 SUBSEP $3] = 1
+    order[++cnt] = $0
+    next
+  }
+  {
+    if ($0 == "") next
+    if (!(($1 SUBSEP $2 SUBSEP $3) in isdef)) referenced[$1] = 1
+  }
+  END {
     for (i = 1; i <= cnt; i++) {
       split(order[i], p, FS)
       if (p[1] in referenced) continue
@@ -187,7 +208,7 @@ out="$(POP="$pop" SIGHT="$sightings" awk '
       printf "  %s:%s:%s\n", p[2], p[3], p[1]
     }
   }
-')"
+' "$work/pop" "$work/sightings")" || { echo "guardrails/dead-event: reconciliation failed" >&2; exit 2; }
 
 hits="$(printf '%s' "$out" | grep -c . || true)"
 [ "${hits:-0}" -gt 0 ] || exit 0
