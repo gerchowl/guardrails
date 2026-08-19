@@ -99,6 +99,38 @@ snapshot **hard-fails** (new magic values are gated from day 1), burn-down **nud
 re-recording **refuses to loosen**. Same shape as flock's DEBT.md census; generalizable to any
 count-based gate.
 
+## Duplicated boilerplate — pin the invariant with a conformance matrix
+
+Several gates carry a near-verbatim preamble: the `files()` walker, an `allowed_file()` that
+splits colon-separated path globs, and the `guardrails-ok` line/above-line escape. Issue #55 asked
+whether to extract it. **The answer is no, and the reason is worth stating** because the instinct
+says otherwise: the shared surface is ~20 lines, each gate genuinely mutates it (different built-in
+exemptions; `no-debug-leftovers` exempts `main.rs`/`bin/`, `no-raw-trace-fields` does not), and a
+`source`d library would have to resolve across three invocation contexts — the repo checkout, the
+Nix `$out/bin` install, and a consumer's `PATH` — which is more machinery than it removes. The one
+thing that *did* earn extraction (`tools/nudge-ledger.sh`) earned it by owning non-trivial state.
+
+But duplication has a real cost, and #57 measured it: the bash-3.2 empty-array fix landed in
+`hot-info.sh` **with a comment explaining the hazard**, while two sibling copies kept crashing.
+Nobody diffed the copies, because nothing required them to agree.
+
+So the deliverable is not an abstraction — it is a **conformance matrix** in `gates/test-gates.sh`:
+one table of `(gate, glob-env-var, enforce-knob, fixture)` rows, and every row is asserted against
+the same invariants (the fixture is really caught; the `./`-prefix normalization works with and
+without a leading `*`; an empty knob neither crashes nor allows everything). A new gate is enrolled
+by adding **one row**. Two properties make this more than a rename of the old per-gate tests:
+
+- **Non-vacuity is asserted first.** Each row proves its fixture is caught with no glob set, so the
+  allow-glob rows below cannot pass green on a gate that flags nothing.
+- **Shape, where behaviour can't reach.** The bash-3.2 hazard is invisible to a behaviour probe on
+  bash 5 (`BASH_COMPAT=3.2` and `shopt -s compat32` do *not* restore the `set -u` empty-array
+  error), and a "helpful" early return would satisfy a runtime probe while leaving the unguarded
+  expansion in place. So it is checked **structurally** on any bash: every array built by
+  `read -ra` must be expanded through `${a[@]+"${a[@]}"}` or `"${a[@]:-}"` at every site.
+
+Generalizes: when N copies must agree, the cheap enforcement is a table that fails if one drifts —
+not a shared module that each copy re-implements around.
+
 ## Docs-as-tests — the how-to *is* the test suite
 
 The strongest can't-drift docs are the ones CI executes. Invert "write docs about the code" into
