@@ -16,6 +16,8 @@ rest, run deep checks async.* This doc is the contract; `flake.nix` ships the to
 | adr-matrix (every Accepted ADR cited in the status matrix) | decided designs outrun the feature/status matrix | **GATE** |
 | no-conflict-markers | committed merge-conflict debris | **GATE** |
 | no-raw-trace-fields (`?`/`%` outside the schema file) | PII/secret leak into the audit JSONL | **GATE** |
+| hot-info (`info!`/`warn!` on a per-iteration path) | level-vs-frequency drift: the audit trail becomes a fire hose | **NUDGE** |
+| log-budget (`max_pct` / `require` over a real JSONL log) | an event drowning the stream, **and** an operation that logs nothing | **GATE/NUDGE** |
 | doc-tests (doctest / trycmd / `mdbook test`) | examples & CLI output drift from real behaviour | **CONVENTION** (consumer-wired, see below) |
 | gitleaks | committed secrets | **GATE** |
 | rustfmt --check, clippy -D warnings | drift from baseline | **GATE** |

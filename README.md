@@ -56,6 +56,14 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
     the reflexive way PII/secrets leak. Confine raw formatting to the schema/redaction surface where
     fields are *defined*: `GUARDRAILS_TRACE_ALLOW_GLOBS="src/trace_schema.rs:..."`. String/char
     literals are blanked first, so regex patterns like `r"(?i)…"` are never mistaken for it. **GATE**
+  - `hot-info` — `info!`/`warn!` on a per-iteration path (inside `loop`/`for`/`while`, or in a
+    `tick`/`poll`/`render`-style fn). *Frequency dictates level* — an INFO in a render loop turns the
+    audit trail into a fire hose. Lexical and therefore heuristic, so it is a **NUDGE** (promote with
+    `GUARDRAILS_HOTINFO_ENFORCE=1`; skip paths via `GUARDRAILS_HOTINFO_ALLOW`). Deliberately does
+    **not** join the nudge-ledger: age-promotion is only sound for a precision-first check, and a
+    false positive here would age into a hard block on correct code. Known limit: it sees *lexical*
+    nesting, not call frequency — a logging **facade** hides the loop from it. `log-budget` is the
+    instrument that catches that; the two are complementary. **NUDGE**
   - `no-commented-code` — commented-out code graveyards. **GATE**
   - `no-hardcoded` — magic values that should be tunables (`src/` only; bless prefixes in
     `guardrails-allow.txt`; token-level floats, underscored ints, `/Users//home//tmp` paths checked
@@ -79,6 +87,14 @@ The devShell brings the toolbelt and auto-installs **both hook stages** when a `
     with a matching status — the index is checked, never trusted as the input.
     `guardrails-adr-matrix [<adr-index>] [<matrix>]` (auto-discovers both); exempt non-feature decision
     ADRs via `guardrails-adr-exempt.txt` / `$ADR_MATRIX_EXEMPT`. **GATE**
+  - `log-budget` — the one gate that reads a **log**, not source. Compares an observed JSONL log
+    against a checked-in `log-budgets.toml`, in **two directions**: `max_pct` bounds an event from
+    above (**noise** — one event drowning the stream, which a source scan cannot see once a repo
+    routes events through a facade), and `require` bounds a declared event from below (**silence** —
+    an operation that emitted nothing). Absence is only checkable against an *enumerable population*;
+    the budgets file is that population, exactly as `adr-matrix` uses the Accepted-ADR rows. Measured
+    and deterministic, so it gates. No budgets file → skips, so adopting the flake costs nothing until
+    a repo opts in. **GATE/NUDGE**
   - `perf-budget` — gate criterion regressions against a checked-in `perf-budgets.toml`. **GATE/NUDGE**
     (CI-deep, not pre-commit: run after `cargo criterion`; gate big regressions, nudge the rest.)
   - `perf-record` — append per-bench medians to a committed `perf-history.csv`. The **PR diff is the

@@ -1,0 +1,31 @@
+# guardrails log budgets — checked-in expectations the `log-budget` gate enforces against a REAL log.
+#
+# Workflow: capture a representative session (run the app through the flows you care about), point
+# `sample` at the resulting JSONL, then `guardrails-log-budget`. The gate only COMPARES — capturing
+# the log is your job, exactly as `cargo criterion` is for perf-budget. Measured, not inferred.
+#
+# This file is not just configuration — it is the ENUMERABLE POPULATION that makes absence
+# detectable. Every other gate greps a file that exists, so it can only catch what IS there. Naming
+# an event under [require] is what turns "this operation logs nothing" into a failing check.
+#
+# Delete this file to disable the gate entirely (it skips silently when absent).
+
+sample = "logs/session.jsonl"   # representative JSONL log — one JSON object per line
+event_field = "event"           # key naming the event id; falls back to target+message
+default_max_pct = 5.0           # no single event id may exceed this share of the stream
+
+# --- NOISE: bound an event from above -------------------------------------------------------
+# The classic drift is a heartbeat or a poll left at info!. Frequency dictates level: if one event
+# is most of your log, the log is no longer readable at the rate a human reads.
+#
+# [event."render.tick"]
+# max_pct = 0.5                 # per-event ceiling, overrides default_max_pct
+# mode = "gate"                 # gate | nudge   (default gate)
+
+# --- SILENCE: bound a declared event from below ----------------------------------------------
+# The expensive defect no source scan can see. If a user-visible operation completes without
+# emitting anything, nobody can debug it after the fact. Declare the events that MUST exist.
+#
+# [require."session.switch.completed"]
+# min_count = 1
+# mode = "gate"
