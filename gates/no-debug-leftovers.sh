@@ -21,7 +21,10 @@ allowed_output() {
   set -- "${1#./}"
   case "$1" in *gates/*|tests/*|*/tests/*|*_test.*|*.test.*|examples/*|*/examples/*|main.rs|*/main.rs|build.rs|*/build.rs|bin/*|*/bin/*) return 0 ;; esac
   local g
-  for g in "${output_globs[@]}"; do
+  # bash 3.2 (stock macOS `/bin/bash`) errors on "${arr[@]}" for an EMPTY array under
+  # `set -u`; the ${arr[@]+...} guard is the portable form. Without it this gate dies on
+  # line one wherever /bin/bash is the interpreter (#57).
+  for g in ${output_globs[@]+"${output_globs[@]}"}; do
     [ -n "$g" ] || continue
     # $g is intentionally a glob pattern for case-matching
     # shellcheck disable=SC2254

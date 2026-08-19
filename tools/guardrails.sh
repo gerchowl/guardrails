@@ -34,12 +34,22 @@ GATES — block a commit unless escaped:
                       in your schema surface (PII/secrets leak into logs by reflex otherwise)
   derived-docs        regions marked `<!-- guardrails:derived cmd="…" -->` must match `cmd`'s output
                       (re-run with --fix to regenerate; commands run with repo-hook trust)
+  log-budget          the one gate that reads a LOG, not source: an observed JSONL vs a checked-in
+                      log-budgets.toml, in BOTH directions — `max_pct` bounds an event from above
+                      (noise), `[require]` bounds a declared event from below (silence). No
+                      budgets file → skips. Per-event `mode = "nudge"` / GUARDRAILS_LOG_ENFORCE=1
   + gitleaks · rustfmt · clippy -D warnings · cargo-deny
 
 NUDGES — warn (exit 0); promote per-repo with the gate's *_ENFORCE knob:
   ci-shim             a CI workflow runs logic but no `nix flake check` (GUARDRAILS_CI_SHIM_ENFORCE)
   duplication         a ≥6-line block cloned across ≥2 sites — reinvention vs reuse; extract a
                       helper (GUARDRAILS_DUP_ENFORCE / _MIN_LINES / _EXTS / _ALLOW)
+  hot-info            info!/warn! on a per-iteration path — frequency dictates level
+                      (GUARDRAILS_HOTINFO_ENFORCE / _ALLOW)
+  dead-event          a declared event emitter with no call site — mark the logging facade
+                      `// guardrails:events` (or a -begin/-end region); every pub fn in it must
+                      be referenced somewhere else. No marker → the gate skips
+                      (GUARDRAILS_DEADEVENT_ENFORCE)
 CI-deep (not pre-commit) — run after `cargo criterion`:
   perf-budget             gate criterion regressions over a checked-in perf-budgets.toml
   perf-record             append per-bench medians to perf-history.csv — the PR diff is the report,
@@ -59,12 +69,18 @@ CONFIG KNOBS (in your repo root):
                            e.g.  entry: env GUARDRAILS_OUTPUT_GLOBS=*/cli/*:scripts/* guardrails-no-debug-leftovers
   GUARDRAILS_TRACE_ALLOW_GLOBS  no-raw-trace-fields: colon-sep path globs for the schema/redaction
                            surface where raw ?/% field formatting is defined, e.g. src/trace_schema.rs
+  // guardrails:events     dead-event: marks a file (or a -begin/-end region) as the logging
+                           facade — the DECLARED population of event emitters. Not an env var by
+                           design: the declaration lives in the code it describes
   guardrails-allow.txt     no-hardcoded: blessed path prefixes to skip
   guardrails-baseline.txt  no-hardcoded ratchet: committed per-file count snapshot (or point
                            GUARDRAILS_HARDCODED_BASELINE elsewhere); --record-baseline refuses
                            to loosen — the ratchet only tightens
   GUARDRAILS_ENV_PREFIXES  no-hardcoded: colon-sep env-var name prefixes to flag as bare string
                            literals (write the shared const instead), e.g. "MYAPP_:OTHER_"
+  log-budgets.toml         log-budget: `sample` (the captured JSONL), per-event `max_pct` ceilings and
+                           `[require]` floors. Absence is only checkable against an enumerable
+                           population — this file IS that population
   perf-budgets.toml        perf-budget: criterion median ceilings (run after `cargo criterion`)
   perf-history.csv         perf-record: committed per-bench history; the PR diff = the perf report
   numerical-obligation.toml  numerical-obligation: [set."name"] entries → (baseline json, measurement
