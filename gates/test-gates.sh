@@ -1029,6 +1029,294 @@ if printf '%s' "$s_json" | grep -q '"cargo-deny"' && printf '%s' "$s_json" | gre
   echo "ok    — stale: --json emits per-gate stats without config"
 else echo "FAIL  — stale: --json broken ($s_json)"; fails=$((fails + 1)); fi
 
+# --- hot-info: info!/warn! on a per-iteration path (level vs FREQUENCY) ------------
+# Heuristic + lexical by design, so the fixtures pin BOTH directions: the naive hot cases it must
+# catch, and the depth-decrement cases a sloppy brace tracker would leak into (a macro AFTER a
+# closed loop is the load-bearing negative — without it a bad `depth--` marks the rest of the fn hot).
+hot_gate="$here/hot-info.sh"
+mkdir -p "$tmp/hot"
+hot_assert() { # desc, want-exit, env(or --), file-content
+  local desc="$1" want="$2"; shift 2
+  local env=()
+  while [ "$1" != "--" ]; do env+=("$1"); shift; done
+  shift
+  printf '%s\n' "$1" > "$tmp/hot/h.rs"
+  env "${env[@]}" "$hot_gate" "$tmp/hot/h.rs" >/dev/null 2>&1
+  if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
+}
+# NOTE: default mode is a NUDGE (exit 0 even on hits), so catch-cases assert under ENFORCE=1.
+E=GUARDRAILS_HOTINFO_ENFORCE=1
+
+hot_assert "plain info! in a fn body is NOT hot"       0 $E -- 'fn f() { info!("started"); }'
+hot_assert "info! inside loop {} is flagged"           1 $E -- 'fn f() {
+    loop {
+        info!("tick");
+    }
+}'
+hot_assert "info! inside for is flagged"               1 $E -- 'fn f() {
+    for x in xs {
+        info!("item");
+    }
+}'
+hot_assert "warn! inside while is flagged"             1 $E -- 'fn f() {
+    while cond {
+        warn!("retry");
+    }
+}'
+hot_assert "single-line for { info! } is flagged"      1 $E -- 'fn f() { for x in xs { info!("hot"); } }'
+for hotfn in tick poll_once sample_gpu heartbeat render_frame update_state; do
+  hot_assert "info! in fn $hotfn() is flagged"         1 $E -- "fn $hotfn() {
+    info!(\"beat\");
+}"
+done
+# LOAD-BEARING negatives — a leaked brace depth would flag these.
+hot_assert "info! AFTER a closed loop is NOT flagged"  0 $E -- 'fn f() {
+    for _ in xs { }
+    info!("finished");
+}'
+# SAME-LINE variant of the above. The multi-line fixture alone passed while the one-liner
+# false-positived: the prefix brace-balance was counting the enclosing fn's `{` too, so the
+# balance never returned to zero. Caught in review; this pins it.
+hot_assert "info! after a closed loop ON ONE LINE is NOT flagged" 0 $E -- 'fn f() { for _ in xs { } info!("done"); }'
+hot_assert "info! BETWEEN two loops is NOT flagged"    0 $E -- 'fn f() {
+    for _ in xs { }
+    info!("midpoint");
+    for _ in ys { }
+}'
+hot_assert "info! after a hot fn closes is NOT flagged" 0 $E -- 'fn tick() {
+    let x = 1;
+}
+fn lifecycle() {
+    info!("started");
+}'
+hot_assert "loop keyword inside a string is NOT a loop" 0 $E -- 'fn f() { let s = "loop { info!(x) }"; }'
+# Nested constructs that ARE hot.
+hot_assert "warn! in a closure inside for is flagged"  1 $E -- 'fn f() {
+    for x in xs {
+        xs.map(|v| { warn!("v"); });
+    }
+}'
+hot_assert "info! in a match arm inside loop flagged"  1 $E -- 'fn f() {
+    loop {
+        match e {
+            _ => { info!("arm"); }
+        }
+    }
+}'
+# Escape hatches — the annotation is the deliverable (forced deliberation, diff-visible).
+hot_assert "guardrails-ok on the line suppresses"      0 $E -- 'fn f() {
+    loop {
+        info!("tick"); // guardrails-ok(hot-info): bounded, 3 iterations
+    }
+}'
+hot_assert "own-line guardrails-ok above suppresses"   0 $E -- 'fn f() {
+    loop {
+        // guardrails-ok(hot-info): startup only
+        info!("tick");
+    }
+}'
+hot_assert "marker above the WRONG line does not leak" 1 $E -- 'fn f() {
+    loop {
+        // guardrails-ok(hot-info): startup only
+        let y = 1;
+        info!("tick");
+    }
+}'
+# The known false positive: a startup loop that runs 3x is CORRECT code and WILL be flagged.
+# Documented, not pretended away — the annotation is the answer.
+hot_assert "known FP (startup loop) is flagged"        1 $E -- 'fn init() {
+    for c in configs {
+        info!("loaded config");
+    }
+}'
+hot_assert "known FP suppressed by an annotated reason" 0 $E -- 'fn init() {
+    for c in configs {
+        info!("loaded config"); // guardrails-ok(hot-info): startup, len(configs) == 3
+    }
+}'
+# NUDGE contract: hits do NOT fail by default; the ENFORCE knob promotes.
+hot_assert "hits are a NUDGE by default (exit 0)"      0 -- 'fn f() {
+    loop {
+        info!("tick");
+    }
+}'
+# Allow-glob, with and without a leading `*` (the ./-prefix normalization every gate must satisfy).
+mkdir -p "$tmp/hotroot/vendored"
+printf 'fn f() {\n    loop {\n        info!("tick");\n    }\n}\n' > "$tmp/hotroot/vendored/gen.rs"
+( cd "$tmp/hotroot" && GUARDRAILS_HOTINFO_ENFORCE=1 GUARDRAILS_HOTINFO_ALLOW='vendored/*' "$hot_gate" ./vendored/gen.rs >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — hot-info allow-glob matches ./-prefixed path"
+else echo "FAIL  — hot-info allow-glob missed ./-prefixed path"; fails=$((fails + 1)); fi
+mkdir -p "$tmp/hotroot/src/vendored"
+cp "$tmp/hotroot/vendored/gen.rs" "$tmp/hotroot/src/vendored/gen.rs"
+( cd "$tmp/hotroot" && GUARDRAILS_HOTINFO_ENFORCE=1 GUARDRAILS_HOTINFO_ALLOW='*/vendored/*' "$hot_gate" ./src/vendored/gen.rs >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — hot-info allow-glob matches nested path with leading *"
+else echo "FAIL  — hot-info allow-glob broken with leading *"; fails=$((fails + 1)); fi
+# tests/ exempt even for a real hot info! (relative path, as pre-commit passes it)
+printf 'fn f() {\n    loop {\n        info!("tick");\n    }\n}\n' > "$tmp/tests/hot_leak.rs"
+( cd "$tmp" && GUARDRAILS_HOTINFO_ENFORCE=1 "$hot_gate" tests/hot_leak.rs >/dev/null 2>&1 )
+if [ $? = 0 ]; then echo "ok    — hot-info excludes top-level tests/ (relative)"
+else echo "FAIL  — hot-info flags top-level tests/ (relative)"; fails=$((fails + 1)); fi
+# --- adversarial round: lexer edge cases that a line-oriented scanner gets wrong ---------------
+# Every case below produced a WRONG verdict before the scanner became a positional lexer that
+# carries string/comment state across lines and evaluates a macro at its own offset.
+hot_assert "escaped quotes do not leak a fake loop"    0 $E -- 'fn f() { let s = "he said \"loop {\""; info!("plain"); }'
+hot_assert "raw string containing loop{ is not a loop" 0 $E -- 'fn f() {
+    let s = r#"
+    loop {
+    "#;
+    info!("not in loop");
+}'
+hot_assert "raw string containing } cannot close a real loop" 1 $E -- 'fn f() {
+    for x in xs {
+        let s = r#"
+        }
+        "#;
+        info!("really hot");
+    }
+}'
+hot_assert "multi-line string cannot leak a loop scope" 0 $E -- 'fn f() {
+    let s = "unterminated with loop {
+    more";
+    info!("fine");
+}'
+hot_assert "/* */ block comment is not a loop"         0 $E -- 'fn f() {
+    /* for x in xs { */
+    info!("not in loop");
+    /* } */
+}'
+hot_assert "nested loops on ONE line still flag"       1 $E -- 'fn f() { for a in xs { for b in ys { } info!("outer"); } }'
+hot_assert "single-line hot fn flags"                  1 $E -- 'fn tick() { info!("beat"); }'
+hot_assert "single-line hot fn (warn!) flags"          1 $E -- 'fn poll() { warn!("w"); }'
+hot_assert "for with { on the NEXT line still flags"   1 $E -- 'fn f() {
+    for x in xs
+    {
+        info!("in loop");
+    }
+}'
+hot_assert "guardrails-ok inside a MESSAGE does not suppress" 1 $E -- 'fn f() {
+    loop {
+        info!("guardrails-ok in the msg");
+    }
+}'
+hot_assert "lifetime tick is not a char literal"       1 $E -- 'fn f<'"'"'a>(x: &'"'"'a str) {
+    loop {
+        info!("tick");
+    }
+}'
+
+# DETERMINISM: identical input must yield byte-identical output.
+printf 'fn f() {\n    loop {\n        info!("tick");\n    }\n}\n' > "$tmp/hot/h.rs"
+h1="$("$hot_gate" "$tmp/hot/h.rs" 2>&1)"; h2="$("$hot_gate" "$tmp/hot/h.rs" 2>&1)"
+if [ "$h1" = "$h2" ] && printf '%s' "$h1" | grep -q ':3:info!("tick")'; then
+  echo "ok    — hot-info report is deterministic AND names the right line"
+else echo "FAIL  — hot-info report nondeterministic or wrong ($h1)"; fails=$((fails + 1)); fi
+
+# --- log-budget: measured per-event budgets over a representative JSONL log ---------
+# The only gate that reads a LOG, not source — so it is the only one that can see BOTH a facade-
+# hidden fire hose (max_pct) and an operation that emitted NOTHING (require). Absence is checkable
+# only against an enumerable population; the budgets file IS that population.
+lb_gate="$here/log-budget.sh"
+mkdir -p "$tmp/lb"
+lb_run() { ( cd "$tmp/lb" && env "$@" "$lb_gate" log-budgets.toml >/dev/null 2>&1 ); }
+lb_check() { # desc, want-exit, env...
+  local desc="$1" want="$2"; shift 2
+  lb_run "$@"
+  if [ "$?" = "$want" ]; then echo "ok    — $desc"; else echo "FAIL  — $desc"; fails=$((fails + 1)); fi
+}
+# A stream where one event is 80% of the records.
+: > "$tmp/lb/sample.jsonl"
+i=0; while [ $i -lt 8 ]; do printf '{"event":"client.tick","level":"INFO"}\n' >> "$tmp/lb/sample.jsonl"; i=$((i+1)); done
+printf '{"event":"app.startup","level":"INFO"}\n' >> "$tmp/lb/sample.jsonl"
+printf '{"event":"app.shutdown","level":"INFO"}\n' >> "$tmp/lb/sample.jsonl"
+
+# No budgets file at all → skip silently (zero day-one noise in every consumer of the flake).
+rm -f "$tmp/lb/log-budgets.toml"
+lb_check "no budgets file → skip (exit 0)" 0 IGNORE=1
+
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 5.0\n' > "$tmp/lb/log-budgets.toml"
+lb_check "event over default_max_pct is gated" 1 IGNORE=1
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 90.0\n' > "$tmp/lb/log-budgets.toml"
+lb_check "event under default_max_pct passes" 0 IGNORE=1
+# Per-event override + mode.
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 15.0\n\n[event."client.tick"]\nmax_pct = 95.0\n' > "$tmp/lb/log-budgets.toml"
+lb_check "per-event max_pct override raises the ceiling" 0 IGNORE=1
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 15.0\n\n[event."client.tick"]\nmax_pct = 1.0\nmode = "nudge"\n' > "$tmp/lb/log-budgets.toml"
+lb_check "mode=nudge reports without failing" 0 IGNORE=1
+lb_check "GUARDRAILS_LOG_ENFORCE=1 promotes a nudge" 1 GUARDRAILS_LOG_ENFORCE=1
+# ABSENCE — the direction no source-scanning gate can express.
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 95.0\n\n[require."client.slot.flipped"]\nmin_count = 1\n' > "$tmp/lb/log-budgets.toml"
+lb_check "required-but-absent event is gated" 1 IGNORE=1
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 95.0\n\n[require."app.startup"]\nmin_count = 1\n' > "$tmp/lb/log-budgets.toml"
+lb_check "required-and-present event passes" 0 IGNORE=1
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 95.0\n\n[require."app.startup"]\nmin_count = 5\n' > "$tmp/lb/log-budgets.toml"
+lb_check "required event below min_count is gated" 1 IGNORE=1
+# Robustness: a live log has a truncated tail; never crash on it.
+cp "$tmp/lb/sample.jsonl" "$tmp/lb/torn.jsonl"
+printf '{"event":"app.star\n' >> "$tmp/lb/torn.jsonl"
+printf 'sample = "torn.jsonl"\ndefault_max_pct = 95.0\n' > "$tmp/lb/log-budgets.toml"
+lb_check "truncated JSON tail is tolerated" 0 IGNORE=1
+# Missing sample → skip, not fail (CI without a workload must not go red).
+printf 'sample = "nope.jsonl"\ndefault_max_pct = 5.0\n' > "$tmp/lb/log-budgets.toml"
+lb_check "missing sample log → skip (exit 0)" 0 IGNORE=1
+# Fallback identity when the repo has no canonical event field yet.
+printf '{"target":"app","message":"hello"}\n{"target":"app","message":"hello"}\n{"target":"app","message":"bye"}\n' > "$tmp/lb/noev.jsonl"
+printf 'sample = "noev.jsonl"\ndefault_max_pct = 50.0\n' > "$tmp/lb/log-budgets.toml"
+lb_check "falls back to target+message identity" 1 IGNORE=1
+# ...and the identity must be the REAL composite, not a lump-everything-together bucket: an exit
+# code alone would pass even if the fallback collapsed all records into one <unidentified> event.
+fb="$( cd "$tmp/lb" && "$lb_gate" log-budgets.toml 2>/dev/null )"
+if printf '%s' "$fb" | grep -q 'app:hello' && ! printf '%s' "$fb" | grep -q 'unidentified'; then
+  echo "ok    — fallback identity names target+message, not a lump bucket"
+else echo "FAIL  — fallback identity wrong ($fb)"; fails=$((fails + 1)); fi
+# CONFIG ERRORS: a user typo must be a clear message with exit 2, never a Python traceback and
+# never a silent downgrade. exit 2 is deliberately distinct from a budget failure's exit 1.
+lb_traceback() { # desc, toml
+  printf '%s\n' "$2" > "$tmp/lb/log-budgets.toml"
+  out="$( cd "$tmp/lb" && "$lb_gate" log-budgets.toml 2>&1 )"
+  if printf '%s' "$out" | grep -q 'Traceback'; then
+    echo "FAIL  — $1 (python traceback reached the user)"; fails=$((fails + 1))
+  else echo "ok    — $1"; fi
+}
+lb_traceback "non-numeric max_pct is a clean error"    'sample = "sample.jsonl"
+[event."client.tick"]
+max_pct = "big"'
+lb_traceback "non-numeric default_max_pct is clean"    'sample = "sample.jsonl"
+default_max_pct = "big"'
+lb_traceback "non-numeric min_count is clean"          'sample = "sample.jsonl"
+[require."x"]
+min_count = "five"'
+lb_traceback "scalar [event] entry is a clean error"   'sample = "sample.jsonl"
+[event]
+any = 42'
+lb_check "config error exits 2, not 1" 2 IGNORE=1
+# An unrecognised mode used to fall through to nudge — silently disabling enforcement on the very
+# entry the author wrote to enforce.
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 1.0\n\n[event."client.tick"]\nmode = "Gate"\n' > "$tmp/lb/log-budgets.toml"
+lb_check "misspelled mode is rejected, not downgraded" 2 IGNORE=1
+# `[require]` + `x = 5` is a natural mistake for `[require."x"] min_count = 5`.
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 99.0\n\n[require]\nheartbeat = 5\n' > "$tmp/lb/log-budgets.toml"
+lb_check "bare [require] scalar is rejected, not coerced" 2 IGNORE=1
+# A ceiling for an event that never appears is usually a typo — warn, but do not fail.
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 99.0\n\n[event."cleint.tick"]\nmax_pct = 1.0\n' > "$tmp/lb/log-budgets.toml"
+w="$( cd "$tmp/lb" && "$lb_gate" log-budgets.toml 2>&1 >/dev/null )"; wec=$?
+if [ "$wec" = 0 ] && printf '%s' "$w" | grep -q 'cleint.tick'; then
+  echo "ok    — ceiling for an absent event warns without failing"
+else echo "FAIL  — absent-event ceiling silent or fatal ($wec: $w)"; fails=$((fails + 1)); fi
+# The summary counter must not contradict the rows printed above it.
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 1.0\n\n[event."client.tick"]\nmax_pct = 0.5\nmode = "nudge"\n' > "$tmp/lb/log-budgets.toml"
+c="$( cd "$tmp/lb" && "$lb_gate" log-budgets.toml 2>&1 )"
+if printf '%s' "$c" | grep -q 'nudge-mode'; then echo "ok    — summary accounts for nudge-mode findings"
+else echo "FAIL  — summary under-counts mixed findings ($c)"; fails=$((fails + 1)); fi
+
+# DETERMINISM.
+printf 'sample = "sample.jsonl"\ndefault_max_pct = 5.0\n' > "$tmp/lb/log-budgets.toml"
+l1="$( cd "$tmp/lb" && "$lb_gate" log-budgets.toml 2>&1 )"
+l2="$( cd "$tmp/lb" && "$lb_gate" log-budgets.toml 2>&1 )"
+# Determinism alone is satisfied by any consistently-broken gate, so assert the CONTENT too.
+if [ "$l1" = "$l2" ] && printf '%s' "$l1" | grep -q 'client.tick: 80.0% of 10 records (8)'; then
+  echo "ok    — log-budget report is deterministic AND correct"
+else echo "FAIL  — log-budget report nondeterministic or wrong ($l1)"; fails=$((fails + 1)); fi
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails test(s) FAILED" >&2
