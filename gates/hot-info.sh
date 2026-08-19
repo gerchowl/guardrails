@@ -74,6 +74,16 @@ scan() {
     return (s ~ /(^|[^a-zA-Z0-9_])(loop|while|for)([^a-zA-Z0-9_]|$)/)
   }
   function braces(s, ch, n) { n = gsub(ch, "", s); return n }
+  # Tail of s after its LAST loop keyword — so brace balance is measured from the loop, not from
+  # the start of the line (where an enclosing fn`s own `{` would leak in).
+  function after_last_loop(s,   rest, tail) {
+    rest = s; tail = ""
+    while (match(rest, /(^|[^a-zA-Z0-9_])(loop|while|for)([^a-zA-Z0-9_]|$)/)) {
+      tail = substr(rest, RSTART + RLENGTH - 1)
+      rest = tail
+    }
+    return tail
+  }
   {
     raw = $0
     body = raw
@@ -90,8 +100,11 @@ scan() {
     flag_same_line = 0
     if (match(body, /(^|[^a-zA-Z0-9_])(info|warn)![ \t]*\(/)) {
       prefix = substr(body, 1, RSTART)
-      o = prefix; c = prefix
-      if (is_loop(prefix) && braces(o, "{") > braces(c, "}")) flag_same_line = 1
+      if (is_loop(prefix)) {
+        tail = after_last_loop(prefix)
+        o = tail; c = tail
+        if (braces(o, "{") > braces(c, "}")) flag_same_line = 1
+      }
       has_macro = 1
     } else has_macro = 0
 
@@ -135,7 +148,7 @@ while IFS= read -r f; do
           continue ;;
       esac
     fi
-    printf '%s:%s: info!/warn! on a per-iteration path — use debug!/trace!, or annotate\n' "$f" "$no"
+    printf '  %s:%s:%s\n' "$f" "$no" "$(printf '%s' "$line" | sed 's/^[[:space:]]*//')"
     hits=$((hits + 1))
   done < <(scan "$f")
 done < <(files "${roots[@]}")
@@ -144,7 +157,7 @@ done < <(files "${roots[@]}")
 
 [ "$hits" -gt 0 ] || exit 0
 
-msg="$hits info!/warn! call(s) on an apparent per-iteration path (frequency dictates level — see docs/CONVENTIONS.md)"
+msg="$hits info!/warn! call(s) on an apparent per-iteration path — use debug!/trace!, or annotate with a reason (frequency dictates level; see docs/CONVENTIONS.md)"
 
 if [ "${GUARDRAILS_HOTINFO_ENFORCE:-}" = "1" ]; then
   echo "guardrails/hot-info: $msg" >&2
