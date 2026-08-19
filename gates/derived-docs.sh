@@ -176,7 +176,10 @@ process_file() {
     local tmp; tmp="$(mktemp)"
     : > "$tmp"
     local l
-    for l in "${out_lines[@]}"; do
+    # ${arr[@]+…}: bash 3.2 errors on "${arr[@]}" for an empty array under `set -u`. Reachability
+    # here says out_lines is non-empty whenever change=1 — but that is exactly the reasoning that
+    # let #57 sit in two gates. Guard it and stop reasoning.
+    for l in ${out_lines[@]+"${out_lines[@]}"}; do
       printf '%s\n' "$l" >> "$tmp"
     done
     mv "$tmp" "$f"

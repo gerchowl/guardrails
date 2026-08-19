@@ -89,9 +89,14 @@ done < <(files "${roots[@]}")
 
 # Detection emits one machine record per clone group:
 #   GROUP<TAB>canonical_hash<TAB>n_sites<TAB>span_lines<TAB>site1|site2|...
-groups_raw=""
-if [ "${#list[@]}" -gt 1 ]; then
-  groups_raw="$(GUARDRAILS_DUP_MIN_LINES="$min_lines" python3 - "${list[@]}" <<'PY'
+# The detector program is read into a VARIABLE first, at top level, rather than heredoc'd
+# straight into the `$( … )` below. bash 3.2 — stock macOS /bin/bash — cannot parse a heredoc
+# nested inside a command substitution: it scans for a closing quote, runs off the end of the
+# file and dies with "unexpected EOF while looking for matching `''". That is a PARSE error, so
+# the gate was not merely wrong on stock bash, it never ran at all (#57 found the runtime twin
+# of this in two other gates; gates/test-gates.sh now parse-checks every gate under bash 3.x).
+dup_py=""
+IFS= read -r -d '' dup_py <<'PY' || true
 import hashlib, multiprocessing, os, sys
 
 K = max(1, int(os.environ.get("GUARDRAILS_DUP_MIN_LINES", "6")))
@@ -225,7 +230,10 @@ for members in groups.values():
 for span, ghash, nsites, labels in sorted(out, key=lambda t: (-t[0], t[1])):
     print(f"GROUP\t{ghash}\t{nsites}\t{span}\t{'|'.join(labels)}")
 PY
-)"
+
+groups_raw=""
+if [ "${#list[@]}" -gt 1 ]; then
+  groups_raw="$(GUARDRAILS_DUP_MIN_LINES="$min_lines" python3 -c "$dup_py" "${list[@]}")"
 fi
 
 # Lifecycle (first-seen stamping, age-in-commits, growth, promotion, ledger reconcile)

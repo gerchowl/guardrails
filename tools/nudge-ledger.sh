@@ -47,6 +47,25 @@ done
 [ -n "$ledger" ] || { echo "guardrails-nudge-ledger: --ledger is required" >&2; exit 2; }
 case "$enforce_age" in ''|*[!0-9]*) echo "guardrails-nudge-ledger: --enforce-age must be a non-negative integer (got '$enforce_age')" >&2; exit 2 ;; esac
 
+# bash 3.2 — stock macOS /bin/bash — has no associative arrays. Without this guard the harness
+# sprayed `declare: -A: invalid option` and then a cascade of "value too great for base" arithmetic
+# errors into its CALLER's output (the duplication gate still nudged correctly underneath, which is
+# how it went unnoticed). Degrade to the quiet tier instead: every finding reports `new`, nothing
+# promotes, the ledger is left untouched. That is the same fail-open contract this file already
+# states for a ledger it cannot read (see the age caveat above) — an escalation that cannot be
+# computed goes silent, it never falsely blocks. Restoring real tiering needs a rewrite without
+# associative arrays; the devShell ships bash 5, so this path is only hit by a lean environment.
+if ! (declare -A _gr_assoc_probe) 2>/dev/null; then
+  echo "guardrails-nudge-ledger: bash ${BASH_VERSION%%.*} has no associative arrays — persistence tiering disabled (every finding reports 'new'; nothing auto-promotes). Run under bash 4+ for age escalation." >&2
+  if [ "$mode" = check ]; then
+    while IFS="$TAB" read -r k _ l; do
+      [ -n "$k" ] || continue
+      printf '%s%snew%s%s\n' "$k" "$TAB" "$TAB" "$l"
+    done
+  fi
+  exit 0
+fi
+
 # Ledger rows: key<TAB>first_seen_commit<TAB>count
 declare -A led_first led_count
 if [ -f "$ledger" ]; then
