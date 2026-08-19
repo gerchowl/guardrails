@@ -1074,6 +1074,10 @@ hot_assert "info! AFTER a closed loop is NOT flagged"  0 $E -- 'fn f() {
     for _ in xs { }
     info!("finished");
 }'
+# SAME-LINE variant of the above. The multi-line fixture alone passed while the one-liner
+# false-positived: the prefix brace-balance was counting the enclosing fn's `{` too, so the
+# balance never returned to zero. Caught in review; this pins it.
+hot_assert "info! after a closed loop ON ONE LINE is NOT flagged" 0 $E -- 'fn f() { for _ in xs { } info!("done"); }'
 hot_assert "info! BETWEEN two loops is NOT flagged"    0 $E -- 'fn f() {
     for _ in xs { }
     info!("midpoint");
